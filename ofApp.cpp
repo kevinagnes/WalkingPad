@@ -99,53 +99,6 @@ void ofApp::update(){
         X = 1.25f * (reading[0] * 10 - 400);
         Y = 1     * (reading[1] * 10 - 400);
         N = reading[2];
-
-        /*// ORIENTATION ////////
-    int maxVectorSize = 32;
-    // Selecting the high pressure points
-    int t = 45;
-    for (int i = 0; i < sensorsBase; i++) {
-        for (int j = 0; j < sensorsBase; j++) {
-            if (readingArray[(i * sensorsBase) + j] > t) {
-                points.push_back(ofVec2f(i, j));
-                if (points.size() > maxVectorSize) points.pop_front();
-            }
-        }
-    }
-    // Group Points that are close together
-    int tt = 2;
-    for (int i = 0; i < points.size() - 1; i += 2) {
-        if (points.size() < 1) return;
-        if (points[i].distance(points[i + 1]) < tt) {
-            blobs.push_back(points[i]);
-            blobs.push_back(points[i + 1]);
-            if (blobs.size() > maxVectorSize) blobs.pop_front();
-
-        }
-    }
-    // Group the groups until there is only two groups.
-    while (blobs.size() > 2) {
-        for (int i = 0; i < blobs.size() - 1; i += 2) {
-            if (blobs[i].distance(blobs[i + 1]) < tt) {
-                blobs.push_back((blobs[i] + blobs[i + 1]) * 0.5f);
-            }
-            blobs.pop_front();
-            blobs.pop_front();
-        }
-    }
-    if (blobs.size() == 2) {
-        //cout << blobs.size() << endl;
-        for (int i = 0; i < blobs.size(); i++) {
-            blob.push_back(blobs[i]);
-        }
-    }*/
-      
-        //if (blobs.size() >= 2) {
-        //    if (blobs[0].distance(blobs[1]) > 2) {
-        //        blob.push_back(blobs[0]);
-        //        blob.push_back(blobs[1]);
-        //    }
-        //}
     }
     // Keyboard Simulation
     else {
@@ -644,5 +597,51 @@ ofVec2f ofApp::calculateOrientation() {
     return average;
 }
 
+    // ORIENTATION ////////
+    int maxVectorSize = 32;
+      // Selecting the high pressure points
+      int t = 45;
+      for (int i = 0; i < sensorsBase; i++) {
+          for (int j = 0; j < sensorsBase; j++) {
+              if (readingArray[(i * sensorsBase) + j] > t) {
+                  points.push_back(ofVec2f(i, j));
+                  if (points.size() > maxVectorSize) points.pop_front();
+              }
+          }
+      }
+      // Group Points that are close together
+      int tt = 2;
+      for (int i = 0; i < points.size() - 1; i += 2) {
+          if (points.size() < 1) return;
+          if (points[i].distance(points[i + 1]) < tt) {
+              blobs.push_back(points[i]);
+              blobs.push_back(points[i + 1]);
+              if (blobs.size() > maxVectorSize) blobs.pop_front();
+
+          }
+      }
+      // Group the groups until there is only two groups.
+      while (blobs.size() > 2) {
+          for (int i = 0; i < blobs.size() - 1; i += 2) {
+              if (blobs[i].distance(blobs[i + 1]) < tt) {
+                  blobs.push_back((blobs[i] + blobs[i + 1]) * 0.5f);
+              }
+              blobs.pop_front();
+              blobs.pop_front();
+          }
+      }
+      if (blobs.size() == 2) {
+          //cout << blobs.size() << endl;
+          for (int i = 0; i < blobs.size(); i++) {
+              blob.push_back(blobs[i]);
+          }
+      }
+
+          //if (blobs.size() >= 2) {
+          //    if (blobs[0].distance(blobs[1]) > 2) {
+          //        blob.push_back(blobs[0]);
+          //        blob.push_back(blobs[1]);
+          //    }
+          //}
 
 */
