@@ -10,8 +10,8 @@ void ofApp::setup(){
     ofxGuiSetDefaultHeight(20);
     ofxGuiSetDefaultWidth(150); 
     parameters.setName("Thres & Delay");
-    parameters.add(T1.set("Clamp: ", 180, 0, 400));
-    parameters.add(T2.set("Blob Thresh: ", 10, 1, 255));
+    parameters.add(T1.set("Clamp: ", 140, 0, 400));
+    parameters.add(T2.set("Blob Thresh: ", 50, 1, 255));
     parameters.add(T3.set("avgZeroCrossing: ", 60, 0, 500));
     parameters.add(T4.set("stepDebounce: ", 100, 0, 500));
     //parameters.add(T5.set("stepDebounce: ", 500, 0, 1000));
@@ -28,7 +28,7 @@ void ofApp::setup(){
     set.setName("Serial Com: ");
     par.add(baud.set("BAUD ", baud, baudTypes[0], baudTypes[1]));
     par.add(baudSelect.set("BAUD SET", false));
-    par.add(COMPORT.set("COM ", 10, 0, 15));
+    par.add(COMPORT.set("COM ", 12, 1, 15));
     par.add(simulating.set("Keyboard Simulating: ", false));
     par.add(confirm.set("OK", false));
     set.setup(par);
@@ -73,13 +73,13 @@ void ofApp::update(){
             while (serial.available() > 0) {
                 char byteReturned = serial.readByte();
                 switch (counter) {
-                case 64: // CoG X
+                case sensorNumber + 0: // CoG X
                     reading[0] = byteReturned;
                     break;
-                case 65: // CoG Y
+                case sensorNumber + 1: // CoG Y
                     reading[1] = byteReturned;
                     break;
-                case 66: // NaS
+                case sensorNumber + 2: // NaS
                     reading[2] = byteReturned;
                     break;
                 default: // Pressure-sensitive MATRIX values
@@ -87,7 +87,7 @@ void ofApp::update(){
                     break;
                 }
                 counter++;
-                if (counter > 66) {
+                if (counter > sensorNumber+2) {
                     //cout << ofGetElapsedTimeMillis() - timeFromPreviousCall << endl;
                     timeFromPreviousCall = ofGetElapsedTimeMillis();
                     serial.writeByte('A');
@@ -96,9 +96,10 @@ void ofApp::update(){
             }
         }
         // multiply by 1.20f to compensate the rectangular shape
-        X = 1.25f * (reading[0] * 10 - 400);
-        Y = 1     * (reading[1] * 10 - 400);
+        X = 1     * (reading[0] * 50 - 400);
+        Y = 1     * (reading[1] * 50 - 400);
         N = reading[2];
+
     }
     // Keyboard Simulation
     else {
@@ -130,7 +131,6 @@ void ofApp::update(){
     }
 
     // SPEED /////////////
-
     // add values to array
     cogArrayX.pushToWindow(X);
     cogArrayY.pushToWindow(Y);
@@ -142,7 +142,8 @@ void ofApp::update(){
     sN = nasArray.mean();
 
     // detects jump
-    if (abs(nasArray.maxVelocity()) >=12) jump = true;
+    //cout << abs(nasArray.maxVelocity()) << endl;
+    if (abs(nasArray.maxVelocity()) >=50) jump = true;
     else jump = false;
 
     // max and min velocity
@@ -176,12 +177,10 @@ void ofApp::update(){
     // applies a low pass filter in the speed
     speed = lpf.process(speed);
 
-    //
-
     // remove a variable value from speed
     // this helps low stopping latency
     // and smooths low-frequency continuous speed
-    float varT1 = ofMap(speedmul, 1, 3, T1 - 100, T1 + 100);
+    float varT1 = ofMap(speedmul, 1, 3, T1 - 75, T1 + 75);
     speed -= varT1;
     
 
@@ -226,10 +225,7 @@ void ofApp::update(){
                     deltaStep += abs(stepTimer2 - stepTimer1);
                 }   
             }
-            //deltaStep = abs (stepTimer2 - stepTimer1);   
-            
-            
-            
+            //deltaStep = abs (stepTimer2 - stepTimer1);    
             //if (deltaStep > 100) smoothStep1.pushToWindow(deltaStep);
             teta.pushToWindow(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
             smoothStep1.pushToWindow(1);
@@ -344,12 +340,12 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
             ofPushMatrix();
             float ReadingMapped = ofMap(readingArray[(i * sensorsBase) + j], 0, 80, 0, 255, true);
             ofTranslate(startingX+(i*spacing),startingY+(j*spacing));
-            
             ofNoFill();
             ofDrawRectangle(0, 0, spacing, spacing);
-            ofColor pressureColor = ofColor::red;
-            pressureColor.setHsb(ReadingMapped, 255, ReadingMapped);
-            ofSetColor(pressureColor);
+            //ofColor pressureColor = ofColor::red;
+            //pressureColor.setHsb(ReadingMapped, 255, ReadingMapped);
+            //ofSetColor(pressureColor);
+            ofSetColor(ReadingMapped);
             ofFill();
             ofDrawRectangle(0, 0, spacing, spacing);
             //ofSetColor(ofColor::red);
@@ -376,7 +372,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     ofSetLineWidth(3);
     ofPolyline stepsLine;
     float hipotenuse = abs(centroid1.distance(centroid2));
-    if (hipotenuse > 3) {
+    if (hipotenuse > 2) {
         stepsLine.addVertex(startingX + centroid1.x * spacing, startingY + centroid1.y * spacing);
         stepsLine.addVertex(startingX + centroid2.x * spacing, startingY + centroid2.y * spacing);
         
@@ -404,9 +400,9 @@ void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float s
     avx.set(xPos, ofMap(avgX, -400, 400, ofGetHeight(), 0, true), 2);
     ypt.set(xPos, ofMap(sY, -400, 400, ofGetHeight(), 0, true), 2);
     avy.set(xPos, ofMap(avgY, -400, 400, ofGetHeight(), 0, true), 2);
-    npt.set(xPos, ofMap(sN, 0, 64, ofGetHeight(), 0, true), 2);
+    npt.set(xPos, ofMap(sN, 0, sensorNumber, ofGetHeight(), 0, true), 2);
     spt.set(xPos, ofMap(speed, 0,800, ofGetHeight(), 0, true), 2);
-    smpt.set(xPos, ofMap(speedmul, 1, 8, ofGetHeight(), 0, true), 2);
+    smpt.set(xPos, ofMap(speedmul, 1, 3, ofGetHeight(), 0, true), 2);
     lineX.addVertex(xpt);
     lineAvgX.addVertex(avx);
     lineY.addVertex(ypt);
@@ -530,7 +526,7 @@ void ofApp::tryFirstConnection() {
 
 ofVec2f ofApp::calculateCentroid() {
     // ORIENTATION ////////
-    int maxVectorSize = 16;
+    int maxVectorSize = 64;
     // Selecting the high pressure points
     //int t = 30;
     for (int i = 0; i < sensorsBase; i++) {

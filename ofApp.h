@@ -53,7 +53,7 @@ class ofApp : public ofBaseApp{
 			ofToString(ofGetMinutes()) + "_" +
 			ofToString(ofGetSeconds()) + "_" +
 			".csv";
-		const static int sensorsBase = 8;
+		const static int sensorsBase = 16;
 		const static int sensorNumber = sensorsBase*sensorsBase;
 		ofSerial serial;
 		bool connected = false;
