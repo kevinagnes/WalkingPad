@@ -8,10 +8,12 @@
 #include "ofxLPF.h"
 #include "ofConstants.h"
 #include "ofxEasing.h"
+#include "ofxOpenCv.h"
 
 using namespace std;
 using namespace rapidlib;
 using namespace glm;
+using namespace cv;
 
 
 class ofApp : public ofBaseApp{
@@ -25,11 +27,16 @@ class ofApp : public ofBaseApp{
 		void keyReleased(int key);
 		void drawMatrix(int startingX, int startingY, int size);
 		void drawGraph(float sX, float sY, float avgX, float avgY, int sN, float speed = 0);
+		void Processing();
 		void Speed();
+		void OpenCV();
+		void oscSend();
+		void csvRecord();
 
 		ofVec2f calculateCentroid();
 		bool calculateOrientation();
 		bool setupCompleted = false;
+		bool _calibrateNow = false;
 		// gui
 		ofxPanel gui;
 		ofxPanel set;
@@ -38,8 +45,8 @@ class ofApp : public ofBaseApp{
 		ofParameter<bool> baudSelect;
 		ofParameter<bool> confirm, simulating;
 		ofParameterGroup parameters;
-		ofParameter<int> T1,T2,T3,T4,T5;
-		ofParameter<bool> _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix;
+		ofParameter<int> T2,T3,T4,T5;
+		ofParameter<bool> _debugOpticalFlow, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix;
 		
 		ofColor col[2] = { ofColor(45,45,45), ofColor::red };
 		ofxOscSender osc;
@@ -61,7 +68,7 @@ class ofApp : public ofBaseApp{
 		bool connected = false;
 		int counter = 0;
 		float reading[3];
-		int readingArray[sensorNumber];
+		unsigned char readingArray[sensorNumber];
 		string comPort = "COM";
 		int baudTypes[2] = { 57600,115200 };
 		
@@ -132,4 +139,12 @@ class ofApp : public ofBaseApp{
 		int _Timer1 = 0, _Timer2 = 0, _Timer3 = 0, coounter =0;
 		float _stepDist,stepDistance, theSpeed , oldSpeed;
 		bool wait = false, lowSpeed = false, stepDetected = false;
+
+		// OpenCV OpticalFlow Idea
+		bool calculatedFlow;
+		int flowTime=0;
+		ofParameter<float> T1;
+		ofxCvColorImage currentColor;		//First and second original images
+		ofxCvFloatImage flowX, flowY;		//Resulted optical flow in x and y axes
+		ofxCvGrayscaleImage gray1, gray2;
 };

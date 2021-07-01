@@ -1,5 +1,5 @@
 #include "ofApp.h"
-
+#include "opencv2/opencv.hpp"
 //------------------    --------------------------------------------
 void ofApp::setup(){
     dontDraw = false;
@@ -10,19 +10,20 @@ void ofApp::setup(){
     ofxGuiSetDefaultHeight(20);
     ofxGuiSetDefaultWidth(150); 
     parameters.setName("Thres & Delay");
-    parameters.add(T1.set("Clamp: ", 50, 0, 400));
+    parameters.add(T1.set("OpticalFlow: ", 0.1f, 0, 1));
     parameters.add(T2.set("Blob Thresh: ", 50, 1, 255));
     parameters.add(T3.set("avgZeroCrossing: ", 20, 0, 500));
     parameters.add(T4.set("stepDebounce: ", 150, 0, 500));
     parameters.add(T5.set("ZeroCrossing Thresh: ", 25, 0, 400));
     parameters.add(_constant.set("CONSTANT: ", 1, 0, 3));
     parameters.add(_debug.set("showDebug", false));
+    parameters.add(_debugOpticalFlow.set("showOpticalFlow", false));
     parameters.add(_debugNewMethod.set("showCentroid", true));
     parameters.add(bigMatrix.set("show Big Matrix", false));
     parameters.add(showX.set("X CoG", true));
     parameters.add(showY.set("Y CoG", true));
     parameters.add(showSpeed.set("Speed",true));
-    parameters.add(showSpeedMul.set("SpeedMultiplier", true));
+    parameters.add(showSpeedMul.set("SpeedMultiplier", false));
     parameters.add(showAvg.set("ZeroCrossingLine", false));
     parameters.add(showNas.set("NumberOfActiveSensors", false));
     gui.setup(parameters);
@@ -38,12 +39,12 @@ void ofApp::setup(){
     smooth.initialize(60, 1.2f);
     finalS.initialize(60, 2);
     
+    calculatedFlow = false;
 }
-
 //--------------------------------------------------------------
-void ofApp::update(){
-
-    
+void ofApp::update(){}
+//--------------------------------------------------------------
+void ofApp::draw(){
     // setup COM ports or keyboard simulation
     if (!setupCompleted) {
         set.draw();
@@ -59,9 +60,10 @@ void ofApp::update(){
     // OSC
     osc.setup("localhost", 6969);
 
-    // CSV
-    csv.createFile(filename);
-    
+    if (!setupCompleted) return set.draw();
+
+    if (dontDraw) return;
+
     // Get transmition of CoG and Array from WalkingPad
     if (!simulating) {
 
@@ -75,36 +77,55 @@ void ofApp::update(){
             connected = true;
 
             while (serial.available() > 0) {
-                char byteReturned = serial.readByte();
-                switch (counter) {
-                case sensorNumber + 0: // CoG X
-                    reading[0] = byteReturned;
-                    break;
-                case sensorNumber + 1: // CoG Y
-                    reading[1] = byteReturned;
-                    break;
-                case sensorNumber + 2: // NaS
-                    reading[2] = byteReturned;
-                    break;
-                default: // Pressure-sensitive MATRIX values
-                    readingArray[counter] = byteReturned;
-                    break;
+                // ask microcontroller to calibrate
+                if (_calibrateNow) {
+                    serial.writeByte('C');
+                    ofSetColor(ofColor::green);
+                    ofDrawRectangle(0, 0, ofGetWidth(), ofGetHeight());
+                    _calibrateNow = false;
                 }
-                counter++;
-                if (counter > sensorNumber+2) {
-                    if (_debug) cout << "Time from previous reading: " << ofGetElapsedTimeMillis() - timeFromPreviousCall << " ms" << endl;
-                    timeFromPreviousCall = ofGetElapsedTimeMillis();
-                    serial.writeByte('A');
-                    counter = 0;
+                else {
+                    // Pressure-sensitive MATRIX values
+                    char byteReturned = serial.readByte();
+                    if (counter < sensorNumber - 1)readingArray[counter] = byteReturned;
+                    counter++;
+
+                    if (counter > sensorNumber) {
+                        if (_debug) std::cout << "Time from previous reading: " << ofGetElapsedTimeMillis() - timeFromPreviousCall << " ms" << endl;
+                        timeFromPreviousCall = ofGetElapsedTimeMillis();
+                        serial.writeByte('A');
+                        counter = 0;
+                        if (gray1.bAllocated) {
+                            gray2 = gray1;
+                            calculatedFlow = true;
+                        }
+                    }
                 }
             }
         }
+
+        // converts readingArray to an openCV image and calculates optical flow
+        OpenCV();
+
+        // Live Centroid calculation
+        vec2 sum = vec2(0, 0);
+        int total = 0;
+        for (int i = 0; i < sensorsBase; i++) {
+            for (int j = 0; j < sensorsBase; j++) {
+                if (readingArray[(i * sensorsBase) + j] > T2) {
+                    sum += vec2(i, j);
+                    total++;
+                }
+            }
+        }
+        if (total != 0) currentCentroid = sum / total;
+
         // reading is multiplied to this range for visualisation purposes
         // before, the values originaly vary from 0 to 15
         // after,  the values vary from -400 to +400 (800 range)
-        X = 1     * (reading[0] * 50 - 400);
-        Y = 1     * (reading[1] * 50 - 400);
-        N = reading[2];
+        X = 1 * (currentCentroid.x * 50 - 400);
+        Y = 1 * (currentCentroid.y * 50 - 400);
+        N = total;
 
     }
     // Or get Keyboard Simulation
@@ -136,125 +157,10 @@ void ofApp::update(){
         }
     }
 
-    // SPEED /////////////
-    // add values to array
-    cogArrayX.pushToWindow(X);
-    cogArrayY.pushToWindow(Y);
-    nasArray.pushToWindow(N);
-   
-    // average over 20 readings (change readings in rapidStream.cpp)
-    sX = cogArrayX.mean();
-    sY = cogArrayY.mean();
-    sN = nasArray.mean();
-
-    // detects jump
-    if (_debug) cout << "NaS, highest value is jump: " << abs(nasArray.maxVelocity()) << endl;
-    if (abs(nasArray.maxVelocity()) >=50) jump = true;
-    else jump = false;
-
-    // this timer smooths the zero crossing lines for X and Y
-    if (ofGetElapsedTimeMillis() - timer2 > T3) {
-        crossingArrayX.pushToWindow(sX);
-        crossingArrayY.pushToWindow(sY);
-        timer2 = ofGetElapsedTimeMillis();  
-    }
-
-    // stores the zero crossing value
-    avX = crossingArrayX.mean();
-    avY = crossingArrayY.mean();
-
-    // zero cross algorithm based on variable line
-    float varT5 = ofMap(speedmul, 1, 6, T5, T5 - 10);
-    int zCrossX = abs(sX - avX);
-    int zCrossY = abs(sY - avY);
-    if (zCrossX > varT5 || zCrossY > varT5) {
-        // debounce step
-        if (ofGetElapsedTimeMillis() - timer3 > T4) {   
-            if (zCrossX > zCrossY) {
-                switcher = true;
-                if (sX > avX && !changedX) {
-                    freqX++;
-                    //centroid1 = calculateCentroid();
-                    changedX = true;
-                    crossed = true;
-                    stepTimer1 = ofGetElapsedTimeMillis();
-                    timer3 = ofGetElapsedTimeMillis();
-                    
-                }
-                else if (sX < avX && changedX) {
-                    freqX++;
-                    //centroid2 = calculateCentroid();
-                    changedX = false;
-                    crossed = true;
-                    stepTimer2 = ofGetElapsedTimeMillis();
-                    timer3 = ofGetElapsedTimeMillis();
-                } 
-            }
-            else {
-                switcher = false;
-                if (sY > avY && !changedY) {
-                    freqY++;
-                    //centroid1 = calculateCentroid();
-                    changedY = true;
-                    crossed = true;
-                    stepTimer1 = ofGetElapsedTimeMillis();
-                    timer3 = ofGetElapsedTimeMillis();
-                }
-                else if (sY < avY && changedY) {
-                    freqY++;
-                    //centroid2 = calculateCentroid();
-                    changedY = false;
-                    crossed = true;
-                    stepTimer2 = ofGetElapsedTimeMillis();
-                    timer3 = ofGetElapsedTimeMillis();
-                } 
-            }         
-            //teta.pushToWindow(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
-        } 
-    }
-    else crossed = false;
-
-    int minDeltaStep = 600;
-    deltaStep = abs(stepTimer1 - stepTimer2);
-    //if (deltaStep > 200) smoothStep1.pushToWindow(deltaStep);
-    if (deltaStep < 120) deltaStep = minDeltaStep;
-    float process = smooth.process(deltaStep);
-    speedmul = ofMap(process, 150, minDeltaStep, 6, 1, true);
-
-    if (_debug) cout << "DeltaStep:  " << deltaStep << endl;
-    if (_debug) cout << "SpeedMul:   " << speedmul << endl;
-
-    // OSC send
-    ofxOscMessage m;
-    m.setAddress("/xyn");
-    m.addFloatArg(sX);
-    m.addFloatArg(sY);
-    m.addIntArg(sN);
-    m.addFloatArg(theSpeed);
-    m.addFloatArg(speedmul);
-    m.addBoolArg(jump);
-    m.addFloatArg(teta.mean());
-    osc.sendMessage(m, false);
-
-    // Log values in CSV file
-    if (recording) {
-        ofxCsvRow row;
-        row.setFloat(0, sX); // CoG X
-        row.setFloat(1, sY); // CoG Y
-        row.setInt(2, sN);   // NaS mean
-        row.setBool(3, jump);
-        csv.addRow(row);
-    }
-}
-
-//--------------------------------------------------------------
-void ofApp::draw(){
-
-    if (!setupCompleted) return set.draw();
-
-    if (dontDraw) return;
 
     Speed(); 
+    Processing();
+    oscSend();
 
     // draw grid
     ofPushStyle();
@@ -262,15 +168,9 @@ void ofApp::draw(){
         ofSetColor(80,100);
         ofDrawLine(0, y, ofGetWidth(), y);
     }
+    ofPopStyle();
 
-    // draw recording guide
-    ofPopStyle();
-    ofPushStyle();
-    ofSetColor(col[toggle]);
-    ofSetLineWidth(10);
-    ofNoFill();
-    ofDrawRectangle(0, 0, ofGetWidth() - 3, ofGetHeight() - 3);
-    ofPopStyle();
+
 
     // draw the graph
     drawGraph(sX, sY, avX, avY, sN, speed);
@@ -295,9 +195,21 @@ void ofApp::draw(){
     ofPopStyle();
     ofPopMatrix();
 
+    //draw OpenCV  
+    //gray1.mirror(true, false);
+    if (_debugOpticalFlow) gray1.draw(ofGetWidth() *.5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
+
     //draw Matrix
-    if (bigMatrix) drawMatrix(ofGetWidth()/2- ofGetHeight() / 2, ofGetHeight()/2- ofGetHeight()/2, ofGetHeight());
+    if (bigMatrix) drawMatrix(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight());
     else drawMatrix(20, 10, rectSize);
+
+    // draw recording guide
+    ofPushStyle();
+    ofSetColor(col[toggle]);
+    ofSetLineWidth(10);
+    ofNoFill();
+    ofDrawRectangle(0, 0, ofGetWidth() - 3, ofGetHeight() - 3);
+    ofPopStyle();
 
     // draw GUI
     gui.draw();
@@ -306,10 +218,16 @@ void ofApp::draw(){
 
 void ofApp::drawMatrix(int startingX, int startingY, int size) {
     ofPushStyle();
-    ofPushMatrix();
-    calculateCentroid();
+    //calculateCentroid();
     // draw matrix
     int spacing = size / sensorsBase;
+    //Optical flow
+    float* flowXPixels = flowX.getPixelsAsFloats();
+    float* flowYPixels = flowY.getPixelsAsFloats();
+    float sumX=0, sumY = 0, avgX = 0, avgY = 0;
+    int numOfEntries;
+    numOfEntries = 0;
+
     for (int i = 0; i < sensorsBase; i++) {
         for (int j = 0; j < sensorsBase; j ++) {
             ofSetColor(255);
@@ -318,26 +236,51 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
             ofTranslate(startingX+(i*spacing),startingY+(j*spacing));
             ofNoFill();
             ofDrawRectangle(0, 0, spacing, spacing);
-            //ofColor pressureColor = ofColor::red;
-            //pressureColor.setHsb(ReadingMapped, 255, ReadingMapped);
-            //ofSetColor(pressureColor);
             ofColor pressureColor = ReadingMapped;
             if (ReadingMapped < 100 && _debugNewMethod) pressureColor.a = 50;
             ofSetColor(pressureColor);
             ofFill();
             ofDrawRectangle(0, 0, spacing, spacing);
-            //ofSetColor(ofColor::red);
-            //ofDrawBitmapString(ReadingMapped, -10, 0);
+            if (_debugOpticalFlow) {
+                if (calculatedFlow) {
+                    //optical Flow
+                    ofPushStyle();
+                    ofSetLineWidth(3);
+                    ofSetColor(255, 255, 0);
+                    float fx = flowXPixels[(i * sensorsBase) + j];
+                    float fy = flowYPixels[(i * sensorsBase) + j];
+                    //Draw only long vectors
+                    if (fabs(fx) + fabs(fy) > T1) {
+                        ofDrawCircle(-0.5, -0.5, spacing / 10);
+                        ofDrawLine(0, 0, i + fx, j + fy);
+                        numOfEntries += 1;
+                        sumX += fx;
+                        sumY += fy;
+                    }
+                    ofPopStyle();
+                }
+            }
             ofPopMatrix();
         }
     }
-    // draw points
-    ofSetColor(255, 255, 0);
-    for (int i = 0; i < points.size(); i++) {
-        ofDrawCircle(startingX + (points[i].x * spacing),
-                     startingY + (points[i].y * spacing),
-                     spacing/3);
+    
+    if (numOfEntries > 0) {
+        avgX = sumX / numOfEntries;
+        avgY = sumY / numOfEntries;
     }
+
+    if (_debug) std::cout << "avgX: " << avgX << endl;
+    if (_debug) std::cout << "avgY: " << avgY << endl;
+    if (_debug) std::cout << "numOfEntries: " << numOfEntries << endl;
+
+    // draw points
+    //ofSetColor(255, 255, 0);
+    //for (int i = 0; i < points.size(); i++) {
+    //    ofDrawCircle(startingX + (points[i].x * spacing),
+    //                 startingY + (points[i].y * spacing),
+    //                 spacing/3);
+    //}
+
     // draw centroids
     ofSetColor(255, 0, 0);
     ofDrawCircle(startingX + (centroid1.x * spacing),
@@ -355,7 +298,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     if (hipotenuse > 3) {
         stepsLine.addVertex(startingX + centroid1.x * spacing, startingY + centroid1.y * spacing);
         stepsLine.addVertex(startingX + centroid2.x * spacing, startingY + centroid2.y * spacing);  
-        if (_debug) cout << teta.mean() << endl;
+        if (_debug) std::cout << teta.mean() << endl;
     }
     stepsLine.draw();
     
@@ -385,11 +328,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
         speedLine.addVertex(startingX + previousCentroid.x * spacing, startingY + previousCentroid.y * spacing);
         speedLine.draw();
     }
-
-    ofPopMatrix();
     ofPopStyle();
-    
-    
 }
 
 void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float speed ) {
@@ -455,56 +394,10 @@ void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float s
 
 }
 
-void ofApp::keyPressed(int key) {
-    if (simulating) {
-        if (key == OF_KEY_LEFT) {
-            leftDown = true;
-        }
-        if (key == OF_KEY_RIGHT) {
-            rightDown = true;
-        }
-        if (key == OF_KEY_UP) {
-            upDown = true;
-        }
-        if (key == OF_KEY_DOWN) {
-            downDown = true;
-        }
-    }
-}
-
-void ofApp::keyReleased(int key) {
-
-    if (key == 32) {
-        if (toggle && recording) {
-            bool exitAfterSave = false;
-            exitAfterSave = csv.save(filename);
-            if (exitAfterSave) ofExit();
-        }
-        toggle = !toggle;
-        recording = toggle;
-    }
-    if (simulating) {
-        if (key == OF_KEY_LEFT) {
-            leftDown = false;
-        }
-        if (key == OF_KEY_RIGHT) {
-            rightDown = false;
-        }
-        if (key == OF_KEY_UP) {
-            upDown = false;
-        }
-        if (key == OF_KEY_DOWN) {
-            downDown = false;
-        }
-    }
-}
-
 void ofApp::setupDevices() {
     // SERIAL COM 
-    //serial.listDevices();
-    //vector <ofSerialDeviceInfo> deviceList = serial.getDeviceList();
     serial.setup(comPort, baud);
-    if (_debug) cout << serial.available() << endl;
+    if (_debug) std::cout << serial.available() << endl;
     if (serial.available() >= 0) {
         serial.writeByte('A');
     }
@@ -603,23 +496,31 @@ bool ofApp::calculateOrientation() {
     //}
 }
 
+void ofApp::OpenCV() {
+    ofPixels pixel;
+    pixel.setFromPixels(readingArray, 16, 16, OF_IMAGE_GRAYSCALE);
+    gray1 = pixel;
+    if (gray2.bAllocated) {
+        Mat img1 = cvarrToMat(gray1.getCvImage());
+        Mat img2 = cvarrToMat(gray2.getCvImage());
+        Mat flow;                        //Image for flow
+        //Computing optical flow (visit https://goo.gl/jm1Vfr for explanation of parameters)
+        calcOpticalFlowFarneback(img1, img2, flow, 0.5, 1, 3, 5, 5, 1.1, 0);
+        //Split flow into separate images
+        vector<Mat> flowPlanes;
+        split(flow, flowPlanes);
+        //Copy float planes to ofxCv images flowX and flowY
+        //we call this to convert back from native openCV to ofxOpenCV data types
+        IplImage iplX(flowPlanes[0]);
+        //cvConvert(flowX, iplX);
+        flowX = &iplX;
+        IplImage iplY(flowPlanes[1]);
+        flowY = &iplY;
+    }
+}
+
 void ofApp::Speed() {
-    // current Centroid calculation
-    vec2 sum = vec2(0,0);
-    int total = 0;
-    for (int i = 0; i < sensorsBase; i++) {
-        for (int j = 0; j < sensorsBase; j++) {
-            if (readingArray[(i * sensorsBase) + j] > T2) {
-                sum += vec2(i, j);
-                total++;
-            }
-        }
-    }
-    if (total != 0) currentCentroid = sum / total;
-    else {
-        ofSetColor(ofColor::darkRed,127);
-        ofDrawRectangle(0, 0, ofGetWidth(), ofGetHeight());
-    }
+    
 
     /********************* STEP DETECTION *********************/
     // if stepDetected wait for current and previous to be bigger than Threshold
@@ -628,17 +529,17 @@ void ofApp::Speed() {
         avgCentroid = currentCentroid;
         float Threshold = 3.5f * _constant;
         if (distance(currentCentroid, previousStep) < Threshold) {
-            cout << "4 - prevening new comparisons" << endl;
+            if (_debug) std::cout << "4 - prevening new comparisons" << endl;
             wait = true;
         }
         else {
-            cout << "6 - threshold reached" << endl;
+            if (_debug) std::cout << "6 - threshold reached" << endl;
             wait = false;
             stepDetected = false;  
         }
-        
+        /********************* SPEED CALCULATION *********************/
         if (abs(ofGetElapsedTimeMillis() - _Timer1) < 2000) {
-            cout << "5 - calculating speed" << endl;
+            if (_debug) std::cout << "5 - calculating speed" << endl;
             // calculate distance between centroids
             rateOfChange = abs(currentCentroid - previousCentroid) / constant;
             previousCentroid = currentCentroid;
@@ -659,18 +560,16 @@ void ofApp::Speed() {
             if (theSpeed < 2 || abs(_Timer2 - _Timer1) > 1200) theSpeed = 0;
             theSpeed = finalS.process(theSpeed);
             if (theSpeed < 0.01f) theSpeed = 0;
-            coounter++;
-            cout << coounter << endl;
         }
         
     } 
     // comparing currentCentroid and avgCentroid
     if (!wait) { 
-        cout << "1 - comparing currentCentroid and avgCentroid" << endl;
+        if (_debug) std::cout << "1 - comparing currentCentroid and avgCentroid" << endl;
         if (distance(currentCentroid, avgCentroid) < _constant) {
             avgCentroid = ((avgCentroid * elapsedTime) + currentCentroid * constant) / (elapsedTime + constant);
             elapsedTime += constant; 
-            cout << "1 - elapsedTime: " << elapsedTime << "s" <<  endl;
+            if (_debug) std::cout << "1 - elapsedTime: " << elapsedTime << "s" <<  endl;
         }
         else {
             elapsedTime = constant;
@@ -680,7 +579,7 @@ void ofApp::Speed() {
     // step was deteced
     float StepTimeThreshold = 0.075f;
     if (elapsedTime >= StepTimeThreshold) {
-        cout << "2 - step was deteced" << endl;
+        if (_debug) std::cout << "2 - step was deteced" << endl;
         _stepDist = distance(currentCentroid, previousStep);
         stepDetected = true;
         _Timer2 = _Timer1;
@@ -693,7 +592,169 @@ void ofApp::Speed() {
         teta.pushToWindow(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
         previousStep = currentCentroid;      
     }
-    /********************* SPEED CALCULATION *********************/
+    
 
+
+}
+
+void ofApp::Processing() {
+    // SPEED /////////////
+    // add values to array
+    cogArrayX.pushToWindow(X);
+    cogArrayY.pushToWindow(Y);
+    nasArray.pushToWindow(N);
+
+    // average over 20 readings (change readings in rapidStream.cpp)
+    sX = cogArrayX.mean();
+    sY = cogArrayY.mean();
+    sN = nasArray.mean();
+
+    // detects jump
+    if (_debug) std::cout << "NaS, highest value is jump: " << abs(nasArray.maxVelocity()) << endl;
+    if (abs(nasArray.maxVelocity()) >= 20) jump = true;
+    else jump = false;
+
+    // this timer smooths the zero crossing lines for X and Y
+    if (ofGetElapsedTimeMillis() - timer2 > T3) {
+        crossingArrayX.pushToWindow(sX);
+        crossingArrayY.pushToWindow(sY);
+        timer2 = ofGetElapsedTimeMillis();
+    }
+
+    // stores the zero crossing value
+    avX = crossingArrayX.mean();
+    avY = crossingArrayY.mean();
+
+    // zero cross algorithm based on variable line
+    float varT5 = ofMap(speedmul, 1, 6, T5, T5 - 10);
+    int zCrossX = abs(sX - avX);
+    int zCrossY = abs(sY - avY);
+    if (zCrossX > varT5 || zCrossY > varT5) {
+        // debounce step
+        if (ofGetElapsedTimeMillis() - timer3 > T4) {
+            if (zCrossX > zCrossY) {
+                switcher = true;
+                if (sX > avX && !changedX) {
+                    freqX++;
+                    //centroid1 = calculateCentroid();
+                    changedX = true;
+                    crossed = true;
+                    stepTimer1 = ofGetElapsedTimeMillis();
+                    timer3 = ofGetElapsedTimeMillis();
+
+                }
+                else if (sX < avX && changedX) {
+                    freqX++;
+                    //centroid2 = calculateCentroid();
+                    changedX = false;
+                    crossed = true;
+                    stepTimer2 = ofGetElapsedTimeMillis();
+                    timer3 = ofGetElapsedTimeMillis();
+                }
+            }
+            else {
+                switcher = false;
+                if (sY > avY && !changedY) {
+                    freqY++;
+                    //centroid1 = calculateCentroid();
+                    changedY = true;
+                    crossed = true;
+                    stepTimer1 = ofGetElapsedTimeMillis();
+                    timer3 = ofGetElapsedTimeMillis();
+                }
+                else if (sY < avY && changedY) {
+                    freqY++;
+                    //centroid2 = calculateCentroid();
+                    changedY = false;
+                    crossed = true;
+                    stepTimer2 = ofGetElapsedTimeMillis();
+                    timer3 = ofGetElapsedTimeMillis();
+                }
+            }
+            //teta.pushToWindow(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
+        }
+    }
+    else crossed = false;
+
+    int minDeltaStep = 600;
+    deltaStep = abs(stepTimer1 - stepTimer2);
+    //if (deltaStep > 200) smoothStep1.pushToWindow(deltaStep);
+    if (deltaStep < 120) deltaStep = minDeltaStep;
+    float process = smooth.process(deltaStep);
+    speedmul = ofMap(process, 150, minDeltaStep, 6, 1, true);
+
+}
+
+void ofApp::oscSend() {
+    // OSC send
+    ofxOscMessage m;
+    m.setAddress("/walkingpad");
+    m.addFloatArg(theSpeed);
+    //m.addFloatArg(speedmul);
+    //m.addBoolArg(jump);
+    m.addFloatArg(teta.mean());
+    //m.addFloatArg(sX);
+    //m.addFloatArg(sY);
+    //m.addIntArg(sN);
+    osc.sendMessage(m, false);
+}
+
+void ofApp::csvRecord() {
+    // Log values in CSV file
+    if (recording) {
+        ofxCsvRow row;
+        row.setFloat(0, sX); // CoG X
+        row.setFloat(1, sY); // CoG Y
+        row.setInt(2, sN);   // NaS mean
+        row.setBool(3, jump);
+        csv.addRow(row);
+    }
+}
+
+void ofApp::keyPressed(int key) {
+    if (simulating) {
+        if (key == OF_KEY_LEFT) {
+            leftDown = true;
+        }
+        if (key == OF_KEY_RIGHT) {
+            rightDown = true;
+        }
+        if (key == OF_KEY_UP) {
+            upDown = true;
+        }
+        if (key == OF_KEY_DOWN) {
+            downDown = true;
+        }
+    }
+}
+
+void ofApp::keyReleased(int key) {
+
+    if (key == 32) {
+        if (toggle && recording) {
+            // CSV
+            csv.createFile(filename);
+            bool exitAfterSave = false;
+            exitAfterSave = csv.save(filename);
+            if (exitAfterSave) ofExit();
+        }
+        toggle = !toggle;
+        recording = toggle;
+    }
+    if (key == '0') _calibrateNow = true;
+    if (simulating) {
+        if (key == OF_KEY_LEFT) {
+            leftDown = false;
+        }
+        if (key == OF_KEY_RIGHT) {
+            rightDown = false;
+        }
+        if (key == OF_KEY_UP) {
+            upDown = false;
+        }
+        if (key == OF_KEY_DOWN) {
+            downDown = false;
+        }
+    }
 
 }
