@@ -1,15 +1,18 @@
 #include "ofApp.h"
 #include "opencv2/opencv.hpp"
 //------------------    --------------------------------------------
-void ofApp::setup(){
-    dontDraw = false;
+void ofApp::setup() {
     ofBackground(col[0]);
     ofSetBackgroundAuto(true);
     ofSetFrameRate(60);
 
+    dontDraw = false;
+    calculatedFlow = false;
+
+#pragma region GUI_&_InitialVariables
     ofxGuiSetDefaultHeight(20);
-    ofxGuiSetDefaultWidth(150); 
-    parameters.setName("Thres & Delay");
+    ofxGuiSetDefaultWidth(150);
+    parameters.setName("WalkingPad");
     parameters.add(T1.set("OpticalFlow: ", 0.1f, 0, 1));
     parameters.add(T2.set("Blob Thresh: ", 50, 1, 255));
     parameters.add(T3.set("avgZeroCrossing: ", 20, 0, 500));
@@ -20,15 +23,14 @@ void ofApp::setup(){
     parameters.add(_debugOpticalFlow.set("showOpticalFlow", false));
     parameters.add(_debugNewMethod.set("showCentroid", true));
     parameters.add(bigMatrix.set("show Big Matrix", false));
-    parameters.add(showX.set("X CoG", true));
-    parameters.add(showY.set("Y CoG", true));
-    parameters.add(showSpeed.set("Speed",true));
+    parameters.add(showX.set("X CoG", false));
+    parameters.add(showY.set("Y CoG", false));
+    parameters.add(showSpeed.set("Speed", false));
     parameters.add(showSpeedMul.set("SpeedMultiplier", false));
     parameters.add(showAvg.set("ZeroCrossingLine", false));
     parameters.add(showNas.set("NumberOfActiveSensors", false));
     gui.setup(parameters);
     gui.setPosition(ofGetWidth() - gui.getWidth(), 0);
-
     set.setName("Serial Com: ");
     par.add(baud.set("BAUD ", baud, baudTypes[0], baudTypes[1]));
     par.add(baudSelect.set("BAUD SET", false));
@@ -36,25 +38,35 @@ void ofApp::setup(){
     par.add(simulating.set("Keyboard Simulating: ", false));
     par.add(confirm.set("OK", false));
     set.setup(par);
-    smooth.initialize(60, 1.2f);
-    finalS.initialize(60, 2);
-    
-    calculatedFlow = false;
+#pragma endregion 
+
+    lpf.initialize(60, 3);
+    finalS.initialize(60, 3);
+ 
+    currentCentroid = initialCoG;
 }
 //--------------------------------------------------------------
-void ofApp::update(){}
+void ofApp::update() {}
 //--------------------------------------------------------------
-void ofApp::draw(){
+void ofApp::draw() {
+
+#pragma region InitialSetup
     // setup COM ports or keyboard simulation
     if (!setupCompleted) {
-        set.draw();
-        baud = baudTypes[baudSelect];
-        if (confirm) {
-            comPort += COMPORT.toString();
-            if (!simulating) setupDevices();
+        if (skipSetup) {
+            setupDevices("COM12", 57600);
             setupCompleted = true;
         }
-        return;
+        else {
+            set.draw();
+            baud = baudTypes[baudSelect];
+            if (confirm) {
+                comPort += COMPORT.toString();
+                if (!simulating) setupDevices(comPort, baud);
+                setupCompleted = true;
+            }
+            return;
+        }
     }
 
     // OSC
@@ -63,7 +75,9 @@ void ofApp::draw(){
     if (!setupCompleted) return set.draw();
 
     if (dontDraw) return;
+#pragma endregion
 
+#pragma region GetValues
     // Get transmition of CoG and Array from WalkingPad
     if (!simulating) {
 
@@ -105,7 +119,7 @@ void ofApp::draw(){
         }
 
         // converts readingArray to an openCV image and calculates optical flow
-        OpenCV();
+        if (_debugOpticalFlow) OpenCV();
 
         // Live Centroid calculation
         vec2 sum = vec2(0, 0);
@@ -118,7 +132,19 @@ void ofApp::draw(){
                 }
             }
         }
-        if (total != 0) currentCentroid = sum / total;
+        int smoothingCentroid = 10;
+        if (tempCurrentCentroid.size() > smoothingCentroid - 1) tempCurrentCentroid.pop_back();
+        if (total != 0) tempCurrentCentroid.push_front(sum / total);
+        vec2 curr;
+        vec2 HighestCentroid;
+        for (int i = 0; i < tempCurrentCentroid.size(); i++) {
+            if (length(tempCurrentCentroid[i]) > length(HighestCentroid))
+                HighestCentroid = tempCurrentCentroid[i];
+            curr += tempCurrentCentroid[i];
+        }
+        if (tempCurrentCentroid.size() == smoothingCentroid)
+            currentCentroid = (curr - HighestCentroid) / (tempCurrentCentroid.size() - 1);
+
 
         // reading is multiplied to this range for visualisation purposes
         // before, the values originaly vary from 0 to 15
@@ -135,45 +161,53 @@ void ofApp::draw(){
         }
         else {
             if (leftDown) {
-                X = -200; Y = 0; N = 13;
+                currentCentroid.x = 4; currentCentroid.y = 8; N = 13;
             }
             else if (rightDown) {
-                X = 200; Y = 0; N = 13;
+                currentCentroid.x = 12; currentCentroid.y = 8; N = 13;
             }
         }
         if (upDown && downDown) {
-            X = 0; Y = 0; N = 26;
+            currentCentroid.x = 8; currentCentroid.y = 8; N = 26;
         }
         else {
             if (upDown) {
-                X = 0; Y = -200; N = 13;
+                currentCentroid.x = 8; currentCentroid.y = 4; N = 13;
             }
             else if (downDown) {
-                X = 0; Y = 200; N = 13;
+                currentCentroid.x = 8; currentCentroid.y = 12; N = 13;
             }
         }
         if (!upDown && !downDown && !leftDown && !rightDown) {
-            X = 0; Y = 0; N = 26;
+            currentCentroid.x = 8; currentCentroid.y = 8;  N = 26;
         }
+        X = 1 * (currentCentroid.x * 50 - 400);
+        Y = 1 * (currentCentroid.y * 50 - 400);
     }
+#pragma endregion
 
+#pragma region ProcessData
+    MovementDetector();
+    SpeedCalculation();
+    FinalSpeedDecision();
+#pragma endregion
 
-    Speed(); 
-    Processing();
+#pragma region SendData
     oscSend();
+#pragma endregion
 
+#pragma region DrawFunctions
     // draw grid
     ofPushStyle();
-    for (float y = 0; y < ofGetHeight(); y += ofGetHeight()/16) {
-        ofSetColor(80,100);
+    for (float y = 0; y < ofGetHeight(); y += ofGetHeight() / 16) {
+        ofSetColor(80, 100);
         ofDrawLine(0, y, ofGetWidth(), y);
     }
     ofPopStyle();
 
-
-
     // draw the graph
-    drawGraph(sX, sY, avX, avY, sN, speed);
+    //drawGraph(sX, sY, avX, avY, sN, speed);
+    drawGraph(X, Y, 0, 0, N, speed);
 
     // draw if jump
     if (jump)    ofDrawCircle(ofGetWidth(), ofGetHeight(), 50);
@@ -197,8 +231,9 @@ void ofApp::draw(){
 
     //draw OpenCV  
     //gray1.mirror(true, false);
-    if (_debugOpticalFlow) gray1.draw(ofGetWidth() *.5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
-
+    if (_debugOpticalFlow && !simulating) {
+        gray1.draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
+    }
     //draw Matrix
     if (bigMatrix) drawMatrix(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight());
     else drawMatrix(20, 10, rectSize);
@@ -212,28 +247,38 @@ void ofApp::draw(){
     ofPopStyle();
 
     // draw GUI
-    gui.draw();
+    string info = "[0] Calibrate \n[.] GUI \n[1] CoG \n[2] Speed \n[3] Matrix \n[4] Optical \n[5] Simulate";
+    ofPushStyle();
+    ofSetColor(ofColor::orange, 127);
+    if (drawGui) gui.draw();
+    else ofDrawBitmapString(info, vec2(ofGetWidth() - 110, ofGetHeight() -110));
+    ofPopStyle();
+#pragma endregion
 
 }
 
 void ofApp::drawMatrix(int startingX, int startingY, int size) {
     ofPushStyle();
-    //calculateCentroid();
     // draw matrix
     int spacing = size / sensorsBase;
+
     //Optical flow
-    float* flowXPixels = flowX.getPixelsAsFloats();
-    float* flowYPixels = flowY.getPixelsAsFloats();
-    float sumX=0, sumY = 0, avgX = 0, avgY = 0;
+    float* flowXPixels;
+    float* flowYPixels;
+    float sumX = 0, sumY = 0, avgX = 0, avgY = 0;
     int numOfEntries;
     numOfEntries = 0;
+    if (_debugOpticalFlow && !simulating) {
+        flowXPixels = flowX.getPixelsAsFloats();
+        flowYPixels = flowY.getPixelsAsFloats();
+    }
 
     for (int i = 0; i < sensorsBase; i++) {
-        for (int j = 0; j < sensorsBase; j ++) {
+        for (int j = 0; j < sensorsBase; j++) {
             ofSetColor(255);
             ofPushMatrix();
             float ReadingMapped = ofMap(readingArray[(i * sensorsBase) + j], 0, 80, 0, 255, true);
-            ofTranslate(startingX+(i*spacing),startingY+(j*spacing));
+            ofTranslate(startingX + (i * spacing), startingY + (j * spacing));
             ofNoFill();
             ofDrawRectangle(0, 0, spacing, spacing);
             ofColor pressureColor = ReadingMapped;
@@ -241,7 +286,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
             ofSetColor(pressureColor);
             ofFill();
             ofDrawRectangle(0, 0, spacing, spacing);
-            if (_debugOpticalFlow) {
+            if (_debugOpticalFlow && !simulating) {
                 if (calculatedFlow) {
                     //optical Flow
                     ofPushStyle();
@@ -263,7 +308,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
             ofPopMatrix();
         }
     }
-    
+
     if (numOfEntries > 0) {
         avgX = sumX / numOfEntries;
         avgY = sumY / numOfEntries;
@@ -274,37 +319,53 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     if (_debug) std::cout << "numOfEntries: " << numOfEntries << endl;
 
     // draw points
-    //ofSetColor(255, 255, 0);
+    ofSetColor(255, 255, 0);
     //for (int i = 0; i < points.size(); i++) {
     //    ofDrawCircle(startingX + (points[i].x * spacing),
-    //                 startingY + (points[i].y * spacing),
-    //                 spacing/3);
+    //        startingY + (points[i].y * spacing),
+    //        spacing / 3);
+    //    
+    //    //ofDrawArrow(vec3(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing, 0), vec3(startingX + points[i].x * spacing, startingY + points[i].y * spacing, 0), 1);
     //}
+    if (distances.size() > 5) {
+        ofSetColor(ofColor::yellow);
+        ofDrawLine(vec2(startingX + distances[0].x * spacing, startingY + distances[0].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
+        ofSetColor(ofColor::cyan);
+        ofDrawLine(vec2(startingX + distances[1].x * spacing, startingY + distances[1].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
+        ofSetColor(ofColor::blue);
+        ofDrawLine(vec2(startingX + distances[distances.size() - 1].x * spacing, startingY + distances[distances.size() - 1].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
+        ofSetColor(ofColor::red);
+        ofDrawLine(vec2(startingX + distances[distances.size() - 2].x * spacing, startingY + distances[distances.size() - 2].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
+       /* ofSetColor(ofColor::purple);
+        ofDrawLine(vec2(startingX + distances[distances.size() - 3].x * spacing, startingY + distances[distances.size() - 3].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
+        ofSetColor(ofColor::pink);
+        ofDrawLine(vec2(startingX + distances[distances.size() - 4].x * spacing, startingY + distances[distances.size() - 4].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));*/
+    }
 
     // draw centroids
     ofSetColor(255, 0, 0);
     ofDrawCircle(startingX + (centroid1.x * spacing),
-                 startingY + (centroid1.y * spacing),
-                 spacing / 4);
+        startingY + (centroid1.y * spacing),
+        spacing / 4);
     ofSetColor(0, 0, 255);
     ofDrawCircle(startingX + (centroid2.x * spacing),
         startingY + (centroid2.y * spacing),
         spacing / 4);
     // draw connecting lines
-    ofSetColor(0,255,0);  
+    ofSetColor(0, 255, 0);
     ofSetLineWidth(3);
     ofPolyline stepsLine;
     float hipotenuse = abs(centroid1.distance(centroid2));
     if (hipotenuse > 3) {
         stepsLine.addVertex(startingX + centroid1.x * spacing, startingY + centroid1.y * spacing);
-        stepsLine.addVertex(startingX + centroid2.x * spacing, startingY + centroid2.y * spacing);  
+        stepsLine.addVertex(startingX + centroid2.x * spacing, startingY + centroid2.y * spacing);
         if (_debug) std::cout << teta.mean() << endl;
     }
     stepsLine.draw();
-    
+
     if (_debugNewMethod) {
         ofNoFill();
-        ofSetColor(ofColor::white,75);
+        ofSetColor(ofColor::white, 75);
         ofDrawCircle(startingX + (previousStep.x * spacing),
             startingY + (previousStep.y * spacing),
             spacing * _constant * 3.5f);
@@ -331,18 +392,19 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     ofPopStyle();
 }
 
-void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float speed ) {
+void ofApp::drawGraph(float sX, float sY, float avgX, float avgY, int sN, float speed) {
     ofPoint xpt, ypt;
     ofPoint avx, avy;
     ofPoint npt;
-    ofPoint spt,smpt;
+    ofPoint spt, smpt;
     xpt.set(xPos, ofMap(sX, -400, 400, ofGetHeight(), 0, true), 2);
     avx.set(xPos, ofMap(avgX, -400, 400, ofGetHeight(), 0, true), 2);
     ypt.set(xPos, ofMap(sY, -400, 400, ofGetHeight(), 0, true), 2);
     avy.set(xPos, ofMap(avgY, -400, 400, ofGetHeight(), 0, true), 2);
     npt.set(xPos, ofMap(sN, 0, sensorNumber, ofGetHeight(), 0, true), 2);
-    spt.set(xPos, ofMap(theSpeed, 0,20, ofGetHeight(), 0, true), 2);
-    smpt.set(xPos, ofMap(speedmul, 0, 9, ofGetHeight(), 0, true), 2);
+    spt.set(xPos, ofMap(theSpeed, 0, 20, ofGetHeight(), 0, true), 2);
+    //smpt.set(xPos, ofMap(movementDetection, 0, 9, ofGetHeight(), 0, true), 2);
+    smpt.set(xPos, ofMap(movementDetection, 0, 20, ofGetHeight(), 0, true), 2);
     lineX.addVertex(xpt);
     lineAvgX.addVertex(avx);
     lineY.addVertex(ypt);
@@ -355,7 +417,7 @@ void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float s
     if (switcher) alphaY = 127;
     else alphaX = 127;
 
-    ofSetColor(255, 100, 100,alphaX);
+    ofSetColor(255, 100, 100, alphaX);
     if (showX) lineX.draw();
     int txtXpos = 190;
     ofDrawBitmapString("X:   " + ofToString(sX), txtXpos, 15);
@@ -373,7 +435,7 @@ void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float s
     ofDrawBitmapString("N: " + ofToString(sN), txtXpos, 55);
     ofSetColor(ofColor::white);
     ofDrawBitmapString("The Speed: " + ofToString(theSpeed), txtXpos, 65);
-    ofDrawBitmapString("SpeedMul: " + ofToString(speedmul), txtXpos, 75);
+    ofDrawBitmapString("SpeedMul: " + ofToString(movementDetection), txtXpos, 75);
     if (showSpeed) lineSpeed.draw();
     ofSetColor(ofColor::yellow);
     if (showSpeedMul) lineSpeedMul.draw();
@@ -394,9 +456,9 @@ void ofApp::drawGraph(float sX, float sY, float avgX ,float avgY,int sN, float s
 
 }
 
-void ofApp::setupDevices() {
+void ofApp::setupDevices(string COM, int Baud) {
     // SERIAL COM 
-    serial.setup(comPort, baud);
+    serial.setup(COM, Baud);
     if (_debug) std::cout << serial.available() << endl;
     if (serial.available() >= 0) {
         serial.writeByte('A');
@@ -413,87 +475,52 @@ void ofApp::tryFirstConnection() {
         }
         timeOut = ofGetElapsedTimeMillis();
     }
-    
+
 }
 
-ofVec2f ofApp::calculateCentroid() {
+void ofApp::calculateOrientation() {
     // ORIENTATION ////////
     int maxVectorSize = 64;
+    vec2 center = currentCentroid;
+    float min1, min2, max1, max2, max3, max4;
+
+    distances.clear();
+    points.clear();
     // Selecting the high pressure points
     //int t = 30;
     for (int i = 0; i < sensorsBase; i++) {
         for (int j = 0; j < sensorsBase; j++) {
             if (readingArray[(i * sensorsBase) + j] > T2) {
-                points.push_back(ofVec2f(i, j));
+                points.push_back(vec2(i, j));
                 if (points.size() > maxVectorSize) points.pop_front();
             }
         }
     }
-    
-    ofVec2f average;
+    // order values in distances array
     for (int i = 0; i < points.size(); i++) {
-        average += points[i];
-    }
-    average /= points.size();
-    return average;
-}
-
-bool ofApp::calculateOrientation() {
-    //if (sN < 30) return false;
-   // ORIENTATION ////////
-    int maxVectorSize = 64;
-    // Selecting the high pressure points
-    for (int i = 0; i < sensorsBase; i++) {
-        for (int j = 0; j < sensorsBase; j++) {
-            if (readingArray[(i * sensorsBase) + j] > T2) {
-                _points.push_back(ofVec2f(i, j));
-                if (_points.size() > maxVectorSize) _points.pop_front();
+        if (i == 0) distances.push_back(vec3(points[i], distance(points[i], currentCentroid)));
+        else {
+            float tmpDistance = distance(points[i], currentCentroid);
+            if (tmpDistance >= distances[i - 1].z) distances.insert(distances.end(), vec3(points[i],tmpDistance));
+            else {
+                int j = i - 2;
+                if (j > 0) {
+                    for (j; j >= 0; j--) {
+                        if (tmpDistance > distances[j].z) {
+                            distances.insert(distances.begin() + j + 1, vec3(points[i], tmpDistance));
+                            break;
+                        }
+                        else if (j == 0) {
+                            distances.insert(distances.begin(), vec3(points[i], tmpDistance));
+                        }
+                    }
+                }
+                else {
+                    distances.insert(distances.begin(), vec3(points[i], tmpDistance));
+                }
             }
         }
     }
-    // Group Points that are close together
-    int tt = 3;
-    if (_points.size() < 2) return false;
-    for (int i = 0; i < _points.size() - 1; i += 2) {
-        if (_points[i].distance(_points[i + 1]) < tt) {
-            blobs.push_back(_points[i]);
-            blobs.push_back(_points[i + 1]);
-            if (blobs.size() > maxVectorSize) blobs.pop_front();
-
-        }
-    }
-    // Group the groups until there is only two groups.
-    int timeToLeave = 0;
-    while (blobs.size() > 4 || timeToLeave > 200) {
-        for (int i = 0; i < blobs.size() - 1; i += 2) {
-            if (blobs[i].distance(blobs[i + 1]) < tt) {
-                blobs.push_back((blobs[i] + blobs[i + 1]) * 0.5f);
-            }
-            blobs.pop_front();
-            blobs.pop_front();
-            timeToLeave++;
-        }
-    }
-    if (blobs.size() == 4) {
-        if (blobs[0].distance(blobs[1]) > tt*4) {
-            //_centroid1_x.pushToWindow(blobs[0].x);
-            //_centroid1_y.pushToWindow(blobs[0].y);
-            //_centroid2_x.pushToWindow(blobs[1].x);
-            //_centroid2_y.pushToWindow(blobs[1].y);
-            _centroid1 = (blobs[0] + blobs[1]) * 0.5f;
-            _centroid2 = (blobs[2] + blobs[3]) * 0.5f;
-            return true;
-        }
-        return false;
-    }
-    
-
-    //if (blobs.size() >= 2) {
-    //    if (blobs[0].distance(blobs[1]) > 2) {
-    //        blob.push_back(blobs[0]);
-    //        blob.push_back(blobs[1]);
-    //    }
-    //}
 }
 
 void ofApp::OpenCV() {
@@ -519,15 +546,87 @@ void ofApp::OpenCV() {
     }
 }
 
-void ofApp::Speed() {
-    
+void ofApp::FinalSpeedDecision() {
+    // initial movement
+    if (theSpeed < 3 && movementDetection > 0.7f) {
+        theSpeed += 2.5f;
+    }
+
+    int lastSpeedWin = 15;
+    float lastMaxSpeed = 0;
+    theSpeed = finalS.process(theSpeed);
+    if (!stopped) {
+        lastFewSpeeds.push_front(theSpeed);
+        if (lastFewSpeeds.size() > lastSpeedWin) lastFewSpeeds.pop_back();
+
+        if (lastFewSpeeds.size() == lastSpeedWin) {
+            for (int i = 0; i < lastSpeedWin; i++) {
+                if (lastFewSpeeds[i] > lastMaxSpeed)
+                    lastMaxSpeed = lastFewSpeeds[i];
+            }
+        }
+        T6 = ofMap(lastMaxSpeed, 3, 12, 50, 100, true);
+        //cout << lastMaxSpeed << endl;
+    }
+    else {
+        // cuts the speed when stopped after T6 based on previous speed
+        if (abs(ofGetElapsedTimeMillis() - timer4) > T6) {
+            //cout << T6 << endl;
+            for (int i = 0; i < 50; i++)finalS.process(0);
+            theSpeed = 0;
+            stopped = !stopped;
+        }
+    }
+}
+
+void ofApp::SpeedCalculation() {
+
+    // comparing currentCentroid and avgCentroid
+    if (!wait) {
+        if (_debug) std::cout << "1 - comparing currentCentroid and avgCentroid" << endl;
+        if (distance(currentCentroid, avgCentroid) < _constant) {
+            avgCentroid = ((avgCentroid * elapsedTime) + currentCentroid * constant) / (elapsedTime + constant);
+            elapsedTime += constant;
+            if (_debug) std::cout << "1 - elapsedTime: " << elapsedTime << "s" << endl;
+        }
+        else {
+            elapsedTime = constant;
+            avgCentroid = currentCentroid;
+        }
+        // step was deteced
+        float StepTimeThreshold = 0.095f;
+        if (elapsedTime >= StepTimeThreshold) {
+            if (_debug) std::cout << "2 - step was deteced" << endl;
+            _stepDist = distance(currentCentroid, previousStep);
+            stepDetected = true;
+            _Timer2 = _Timer1;
+            _Timer1 = ofGetElapsedTimeMillis();
+            if (_stepDist > 4)stepDistance = _stepDist;
+            ofSetColor(ofColor::gold);
+            ofDrawRectangle(0, 0, ofGetWidth()*0.1f, ofGetHeight()*0.1f);
+            centroid1 = currentCentroid;
+            centroid2 = previousStep;
+            teta.pushToWindow(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
+            if (_debug)std::cout << teta.mean() << endl;
+            previousStep = currentCentroid;
+            elapsedTime = constant;
+            avgCentroid = currentCentroid;
+        }
+    }
+
 
     /********************* STEP DETECTION *********************/
-    // if stepDetected wait for current and previous to be bigger than Threshold
+// if stepDetected wait for current and previous to be bigger than Threshold
     if (stepDetected) {
+        // variables
+        vec2 avgR = vec2(0, 0);
+        vec2 HighestRate = vec2(0, 0);
+        vec2 avgS = vec2(0, 0);
+        vec2 HighestSpeed = vec2(0, 0);
         elapsedTime = constant;
         avgCentroid = currentCentroid;
         float Threshold = 3.5f * _constant;
+
         if (distance(currentCentroid, previousStep) < Threshold) {
             if (_debug) std::cout << "4 - prevening new comparisons" << endl;
             wait = true;
@@ -535,76 +634,86 @@ void ofApp::Speed() {
         else {
             if (_debug) std::cout << "6 - threshold reached" << endl;
             wait = false;
-            stepDetected = false;  
+            stepDetected = false;
         }
+
+        calculateOrientation();
+
         /********************* SPEED CALCULATION *********************/
         if (abs(ofGetElapsedTimeMillis() - _Timer1) < 2000) {
+            ofSetColor(ofColor::pink);
+            ofDrawRectangle(0, ofGetHeight()- ofGetHeight() * 0.1f, ofGetWidth() * 0.1f, ofGetHeight() * 0.1f);
             if (_debug) std::cout << "5 - calculating speed" << endl;
+
+            int _rateWindow = 10;
+            int _rateSpeed = 6;
             // calculate distance between centroids
             rateOfChange = abs(currentCentroid - previousCentroid) / constant;
             previousCentroid = currentCentroid;
             // average rate of change and speed
             avgRateOfChange.push_back(rateOfChange);
-            if (avgRateOfChange.size() > 9) avgRateOfChange.pop_front();
-            vec2 avgR = vec2(0, 0);
-            for (int i = 0; i < avgRateOfChange.size(); i++) avgR += avgRateOfChange[i];
+            if (avgRateOfChange.size() > _rateWindow - 1) avgRateOfChange.pop_front();
+            for (int i = 0; i < avgRateOfChange.size(); i++) {
+                //if (length(avgRateOfChange[i]) > length(HighestRate)) HighestRate = avgRateOfChange[i];
+                avgR += avgRateOfChange[i];
+            }
+            //if (avgRateOfChange.size() == _rateWindow) avgR = (avgR - HighestRate) / (avgRateOfChange.size() - 1);
             avgR /= avgRateOfChange.size();
             avgSpeed.push_back(avgR);
-            if (avgSpeed.size() > 5) avgSpeed.pop_front();
-            vec2 avgS = vec2(0, 0);
-            for (int i = 0; i < avgSpeed.size(); i++) avgS += avgSpeed[i];
+            if (avgSpeed.size() > _rateSpeed - 1) avgSpeed.pop_front();
+            for (int i = 0; i < avgSpeed.size(); i++) {
+                //if (length(avgSpeed[i]) > length(HighestSpeed)) HighestSpeed = avgSpeed[i];
+                avgS += avgSpeed[i];
+            }
+            // if (avgSpeed.size() == _rateSpeed)avgS = (avgS - HighestSpeed) / (avgSpeed.size() - 1);
             avgS /= avgSpeed.size();
             // final speed
-            finalSpeed = avgS / stepDistance;
-            theSpeed = MAX(finalSpeed.x,finalSpeed.y);
-            if (theSpeed < 2 || abs(_Timer2 - _Timer1) > 1200) theSpeed = 0;
-            theSpeed = finalS.process(theSpeed);
-            if (theSpeed < 0.01f) theSpeed = 0;
-        }
-        
-    } 
-    // comparing currentCentroid and avgCentroid
-    if (!wait) { 
-        if (_debug) std::cout << "1 - comparing currentCentroid and avgCentroid" << endl;
-        if (distance(currentCentroid, avgCentroid) < _constant) {
-            avgCentroid = ((avgCentroid * elapsedTime) + currentCentroid * constant) / (elapsedTime + constant);
-            elapsedTime += constant; 
-            if (_debug) std::cout << "1 - elapsedTime: " << elapsedTime << "s" <<  endl;
-        }
-        else {
-            elapsedTime = constant;
-            avgCentroid = currentCentroid;
+            if (stepDistance > 0)finalSpeed = avgS / stepDistance;
+            theSpeed = finalSpeed.x + finalSpeed.y;
+            if (theSpeed < 1 || abs(_Timer2 - _Timer1) > 1200 && stopped) theSpeed = 0;
+
         }
     }
-    // step was deteced
-    float StepTimeThreshold = 0.075f;
-    if (elapsedTime >= StepTimeThreshold) {
-        if (_debug) std::cout << "2 - step was deteced" << endl;
-        _stepDist = distance(currentCentroid, previousStep);
-        stepDetected = true;
-        _Timer2 = _Timer1;
-        _Timer1 = ofGetElapsedTimeMillis();
-        if (_stepDist > 4)stepDistance = _stepDist;
-        ofSetColor(ofColor::gold);
-        ofDrawRectangle(0, 0, 300, 300);
-        centroid1 = currentCentroid;
-        centroid2 = previousStep;
-        teta.pushToWindow(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
-        previousStep = currentCentroid;      
-    }
-    
-
-
 }
 
-void ofApp::Processing() {
+void ofApp::MovementDetector() {
     // SPEED /////////////
     // add values to array
     cogArrayX.pushToWindow(X);
     cogArrayY.pushToWindow(Y);
     nasArray.pushToWindow(N);
 
-    // average over 20 readings (change readings in rapidStream.cpp)
+    // max and min velocity
+    vec2 max = vec2(cogArrayX.maxVelocity(), cogArrayY.maxVelocity());
+    vec2 min = vec2(cogArrayX.minVelocity(), cogArrayY.minVelocity());
+
+    // pushing values to velArray
+    velArrayX.pushToWindow(max.x - min.x);
+    velArrayY.pushToWindow(max.y - min.y);
+
+    // average velocity (smoothing the velocity) 
+    // smoothing, prevents it from reaching zero 
+    // when in the middle of a cycle
+    float cX = velArrayX.mean();
+    float cY = velArrayY.mean();
+
+    // speed = highest value
+    movementDetection = MAX(cX, cY) / 100;
+
+    // applies a low pass filter in the speed
+    movementDetection = lpf.process(movementDetection);
+    movementDetection -= 0.6f;
+    // Clamp negative speed to 0
+    if (movementDetection < 0) {
+        movementDetection = 0;
+        if (!stopped) {
+            timer4 = ofGetElapsedTimeMillis();
+            stopped = !stopped;
+        }
+    }
+
+    /*
+    * // average over 20 readings (change readings in rapidStream.cpp)
     sX = cogArrayX.mean();
     sY = cogArrayY.mean();
     sN = nasArray.mean();
@@ -626,7 +735,7 @@ void ofApp::Processing() {
     avY = crossingArrayY.mean();
 
     // zero cross algorithm based on variable line
-    float varT5 = ofMap(speedmul, 1, 6, T5, T5 - 10);
+    float varT5 = ofMap(movementDetection, 1, 6, T5, T5 - 10);
     int zCrossX = abs(sX - avX);
     int zCrossY = abs(sY - avY);
     if (zCrossX > varT5 || zCrossY > varT5) {
@@ -681,8 +790,8 @@ void ofApp::Processing() {
     //if (deltaStep > 200) smoothStep1.pushToWindow(deltaStep);
     if (deltaStep < 120) deltaStep = minDeltaStep;
     float process = smooth.process(deltaStep);
-    speedmul = ofMap(process, 150, minDeltaStep, 6, 1, true);
-
+    movementDetection = ofMap(process, 150, minDeltaStep, 6, 1, true);
+    */
 }
 
 void ofApp::oscSend() {
@@ -690,11 +799,11 @@ void ofApp::oscSend() {
     ofxOscMessage m;
     m.setAddress("/walkingpad");
     m.addFloatArg(theSpeed);
-    //m.addFloatArg(speedmul);
+    //m.addFloatArg(movementDetection);
     //m.addBoolArg(jump);
     m.addFloatArg(teta.mean());
-    //m.addFloatArg(sX);
-    //m.addFloatArg(sY);
+    m.addFloatArg(currentCentroid.x);
+    m.addFloatArg(currentCentroid.y);
     //m.addIntArg(sN);
     osc.sendMessage(m, false);
 }
@@ -703,10 +812,10 @@ void ofApp::csvRecord() {
     // Log values in CSV file
     if (recording) {
         ofxCsvRow row;
-        row.setFloat(0, sX); // CoG X
-        row.setFloat(1, sY); // CoG Y
-        row.setInt(2, sN);   // NaS mean
-        row.setBool(3, jump);
+        row.setFloat(0, currentCentroid.x); // CoG X
+        row.setFloat(1, currentCentroid.y); // CoG Y
+        row.setInt(2, N);   // NaS mean
+        //row.setBool(3, jump);
         csv.addRow(row);
     }
 }
@@ -741,7 +850,49 @@ void ofApp::keyReleased(int key) {
         toggle = !toggle;
         recording = toggle;
     }
-    if (key == '0') _calibrateNow = true;
+    if (key == '0') {
+        _calibrateNow = true;
+    }
+    if (key == '1') {
+        showX = true;
+        showY = true;
+        showNas = true;
+        bigMatrix = false;
+    }
+    if (key == '2') {
+        showSpeed = true;
+        showSpeedMul = true;
+        showX = false;
+        showY = false;
+        showNas = false;
+        bigMatrix = false;
+    }
+    if (key == '3') {
+        bigMatrix = true;
+        _debugNewMethod = true;
+        _debugOpticalFlow = false;
+        showSpeed = false;
+        showSpeedMul = false;
+        showX = false;
+        showY = false;
+        showNas = false;
+    }
+    if (key == '4') {
+        bigMatrix = true;
+        _debugNewMethod = false;
+        _debugOpticalFlow = true;
+        showSpeed = false;
+        showSpeedMul = false;
+        showX = false;
+        showY = false;
+        showNas = false;
+    }
+    if (key == '5') {
+        simulating = !simulating;
+    }
+    if (key == '.') {
+        drawGui = !drawGui;
+    }
     if (simulating) {
         if (key == OF_KEY_LEFT) {
             leftDown = false;
@@ -758,3 +909,4 @@ void ofApp::keyReleased(int key) {
     }
 
 }
+

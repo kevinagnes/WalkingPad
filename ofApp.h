@@ -22,21 +22,24 @@ class ofApp : public ofBaseApp{
 		void setup();
 		void update();
 		void draw();
-		void setupDevices();
+		void setupDevices(string COM = 0, int Baud = 0);
 		void keyPressed(int key);
 		void keyReleased(int key);
 		void drawMatrix(int startingX, int startingY, int size);
 		void drawGraph(float sX, float sY, float avgX, float avgY, int sN, float speed = 0);
-		void Processing();
-		void Speed();
+		void MovementDetector();
+		void SpeedCalculation();
+		void FinalSpeedDecision();
 		void OpenCV();
 		void oscSend();
 		void csvRecord();
 
-		ofVec2f calculateCentroid();
-		bool calculateOrientation();
+		void calculateOrientation();
+		//bool calculateOrientation();
 		bool setupCompleted = false;
 		bool _calibrateNow = false;
+		bool drawGui = false;
+		bool skipSetup = true; // opens in Unity with auto settings
 		// gui
 		ofxPanel gui;
 		ofxPanel set;
@@ -85,6 +88,7 @@ class ofApp : public ofBaseApp{
 		//rapidStream<float> speedX;
 		//rapidStream<float> speedY;
 		bool jump = false;
+		bool stopped = false;
 		vec2 foot1;
 		vec2 foot2;
 		ofxLPF lpf,smooth, finalS;
@@ -106,7 +110,7 @@ class ofApp : public ofBaseApp{
 		float avX = 0;
 		float avY = 0;
 		float speed = 0;
-		int timer1, timer2, timer3,timer4, timer5;
+		int timer1, timer2, timer3,timer4, timer5,timer6;
 		vec2 orientationAngle;
 		float Angle;
 		bool dontDraw = false;
@@ -114,7 +118,7 @@ class ofApp : public ofBaseApp{
 		int freqX = 0, freqY = 0, oldFreqX = 0, oldFreqY = 0;
 		bool changedX = false;
 		bool changedY = false;
-		float speedmul = 0;
+		float movementDetection = 0;
 		int stepTimer1, stepTimer2;
 		int deltaStep = 0, oldDeltaStep = 0;
 		bool leftDown = false, rightDown = false, upDown = false, downDown = false;
@@ -122,7 +126,8 @@ class ofApp : public ofBaseApp{
 		void tryFirstConnection();
 		int timeOut = 0, timeFromPreviousCall = 0;
 		int timeToCalibrate = 0, timeWithoutFeet = 0;
-		deque<ofVec2f>points, _points, blobs;
+		deque<vec2>points, _points, blobs;
+		vector<vec3> distances;
 		vector<ofVec2f>blob;
 		ofVec2f centroid1, centroid2, _centroid1, _centroid2;
 		//rapidStream<float> _centroid1_x, _centroid1_y, _centroid2_x, _centroid2_y;
@@ -131,14 +136,19 @@ class ofApp : public ofBaseApp{
 		bool switcher = false;
 
 		// variables for the speed
-		vec2 currentCentroid, previousCentroid, avgCentroid, previousStep, rateOfChange, finalSpeed;
-		deque<vec2> avgRateOfChange, avgSpeed;
+		const vec2 initialCoG = vec2(8, 8);
+		vec2 currentCentroid = initialCoG, previousCentroid = initialCoG, avgCentroid = initialCoG, previousStep = initialCoG, rateOfChange = vec2(0,0), finalSpeed = vec2(0, 0);
+		deque<vec2> tempCurrentCentroid,avgRateOfChange, avgSpeed;
+		deque<float> lastFewSpeeds;
 		ofParameter<float> _constant;
 		const float constant = (float)1/60;
 		float elapsedTime = constant;
 		int _Timer1 = 0, _Timer2 = 0, _Timer3 = 0, coounter =0;
-		float _stepDist,stepDistance, theSpeed , oldSpeed;
-		bool wait = false, lowSpeed = false, stepDetected = false;
+		float _stepDist = 0,stepDistance = 0, theSpeed = 0, oldSpeed = 0;
+		bool wait = false, initial = true, stepDetected = false;
+
+
+		int T6 = 50;
 
 		// OpenCV OpticalFlow Idea
 		bool calculatedFlow;
