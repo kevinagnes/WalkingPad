@@ -9,12 +9,12 @@
 #include "ofConstants.h"
 #include "ofxEasing.h"
 #include "ofxOpenCv.h"
+#include "FootBlob.h"
 
 using namespace std;
 using namespace rapidlib;
 using namespace glm;
 using namespace cv;
-
 
 class ofApp : public ofBaseApp{
 
@@ -28,18 +28,20 @@ class ofApp : public ofBaseApp{
 		void drawMatrix(int startingX, int startingY, int size);
 		void drawGraph(float sX, float sY, float avgX, float avgY, int sN, float speed = 0);
 		void MovementDetector();
+		void MovementDetector2();
 		void SpeedCalculation();
 		void FinalSpeedDecision();
 		void OpenCV();
 		void oscSend();
 		void csvRecord();
-
+		void blobDetection();
 		void calculateOrientation();
 		//bool calculateOrientation();
 		bool setupCompleted = false;
 		bool _calibrateNow = false;
 		bool drawGui = false;
 		bool skipSetup = true; // opens in Unity with auto settings
+		long int currentTime =0;
 		// gui
 		ofxPanel gui;
 		ofxPanel set;
@@ -48,8 +50,8 @@ class ofApp : public ofBaseApp{
 		ofParameter<bool> baudSelect;
 		ofParameter<bool> confirm, simulating;
 		ofParameterGroup parameters;
-		ofParameter<int> T2,T3,T4,T5;
-		ofParameter<bool> _debugOpticalFlow, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix;
+		ofParameter<int> T2, T3, T4,T5;
+		ofParameter<bool> _debugOpticalFlow, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix, showPainting;
 		
 		ofColor col[2] = { ofColor(45,45,45), ofColor::red };
 		ofxOscSender osc;
@@ -57,7 +59,7 @@ class ofApp : public ofBaseApp{
 		ofxCsv csv;
 		bool recording;
 		bool toggle;
-		string filename = "rec_" + 
+		string filename = "rec_" +
 			ofToString(ofGetDay()) + "_" +
 			ofToString(ofGetMonth()) + "_" +
 			ofToString(ofGetYear()) + "_" +
@@ -80,10 +82,10 @@ class ofApp : public ofBaseApp{
 		rapidStream<float> nasArray;
 		rapidStream<float> velArrayX;
 		rapidStream<float> velArrayY;
-		rapidStream<float> crossingArrayX;
-		rapidStream<float> crossingArrayY;
-		rapidStream<float> smoothStep1, smoothStep2;
-		rapidStream<float> teta;
+		//rapidStream<float> crossingArrayX;
+		//rapidStream<float> crossingArrayY;
+		//rapidStream<float> smoothStep1, smoothStep2;
+		deque<float> teta;
 		vec2 cogOnStep[4];
 		//rapidStream<float> speedX;
 		//rapidStream<float> speedY;
@@ -93,6 +95,8 @@ class ofApp : public ofBaseApp{
 		vec2 foot2;
 		ofxLPF lpf,smooth, finalS;
 
+		ofxLPF lpfX, lpfY, lpfN;
+
 		float xPos = 0;
 		ofPolyline lineX;
 		ofPolyline lineAvgX;
@@ -100,7 +104,7 @@ class ofApp : public ofBaseApp{
 		ofPolyline lineAvgY;
 		ofPolyline lineN;
 		ofPolyline lineSpeed,lineSpeedMul;
-
+		ofPolyline centroidPainting;
 		float X = 0;
 		float Y = 0;
 		int N = 0;
@@ -126,10 +130,9 @@ class ofApp : public ofBaseApp{
 		void tryFirstConnection();
 		int timeOut = 0, timeFromPreviousCall = 0;
 		int timeToCalibrate = 0, timeWithoutFeet = 0;
-		deque<vec2>points, _points, blobs;
+		deque<vec2>points, _points;
 		vector<vec3> distances;
-		vector<ofVec2f>blob;
-		ofVec2f centroid1, centroid2, _centroid1, _centroid2;
+		vec2 centroid1, centroid2, _centroid1, _centroid2;
 		//rapidStream<float> _centroid1_x, _centroid1_y, _centroid2_x, _centroid2_y;
 		int timerrr=0;
 		bool crossed = false;
@@ -157,4 +160,31 @@ class ofApp : public ofBaseApp{
 		ofxCvColorImage currentColor;		//First and second original images
 		ofxCvFloatImage flowX, flowY;		//Resulted optical flow in x and y axes
 		ofxCvGrayscaleImage gray1, gray2;
+
+		// orientation
+		deque<vec2> stepLocations;
+		vector<FootBlob> blobs;
+		ofxCvBlob blob;
+		ofxCvContourFinder contourFinder;
+		vec2 prevShort, prevLong1, prevLong2,previousCentroid1,previousCentroid2;
+		ofxLPF a1, a2, a3;
+		bool xWin = false;
+		bool oldXwin = false;
+		bool turned = false;
+		ofColor cXcYColor = ofColor::black;
+		float numOfFoot = 1;
+		ofTrueTypeFont text;
+
+		//movement detector 2
+		deque<float> _velocity;
+		deque<float> _avgDis;
+		int velWindow = 10;
+		int disWindow = 10;
+		vec2 _old;
+		int _state = 0;
+		float _s = 0;
+		int _timer, _timer2, _timer3, timeToStop = 450;
+		float _fs = 0, __fs;
+		ofxLPF LowPass,LowPass2;
+		bool shiftCentroid = false , oldShift = false;
 };
