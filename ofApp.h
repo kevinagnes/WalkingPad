@@ -51,7 +51,7 @@ class ofApp : public ofBaseApp{
 		ofParameter<bool> confirm, simulating;
 		ofParameterGroup parameters;
 		ofParameter<int> T2, T3, T4,T5;
-		ofParameter<bool> _debugOpticalFlow, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix, showPainting;
+		ofParameter<bool> _debugOpticalFlow, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix, showPainting, useBlob;
 		
 		ofColor col[2] = { ofColor(45,45,45), ofColor::red };
 		ofxOscSender osc;
@@ -174,17 +174,20 @@ class ofApp : public ofBaseApp{
 		ofColor cXcYColor = ofColor::black;
 		float numOfFoot = 1;
 		ofTrueTypeFont text;
-
+		ofVec2f centroid1_, centroid2_;
+		deque<vec2> C, B;
+		vec2 _midC, _avgB;
+		int windowSizeC = 150, windowSizeB = 60;
 		//movement detector 2
 		deque<float> _velocity;
 		deque<float> _avgDis;
 		int velWindow = 10;
 		int disWindow = 10;
 		vec2 _old;
-		int _state = 0;
-		float _s = 0;
-		int _timer, _timer2, _timer3, timeToStop = 450;
+		int _state = 0, _oldState = 0;
+		float _s = 0, _prevS = 0, _oldVel = 0, _dif = 0;
+		deque<float> _vel;
+		int _timer1, _timer2, _timer3, _timer4, _timer5, _timer6, timeToStop = 2000;
 		float _fs = 0, __fs;
 		ofxLPF LowPass,LowPass2;
-		bool shiftCentroid = false , oldShift = false;
 };

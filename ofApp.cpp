@@ -9,7 +9,7 @@ void ofApp::setup() {
     // Low-pass filter for movoementDetection and finalSpeed
     lpf.initialize(60, 3);
     finalS.initialize(60, 2);
-    LowPass.initialize(60, 4);
+    LowPass.initialize(60, 5);
     LowPass2.initialize(60, 2);
     lpfX.initialize(60, 3); lpfY.initialize(60, 3); lpfN.initialize(60, 3);
     text.load("Sono-Bold.ttf",64);
@@ -19,6 +19,7 @@ void ofApp::setup() {
     ofxGuiSetDefaultWidth(150);
     parameters.setName("WalkingPad");
     parameters.add(T1.set("OpticalFlow: ", 0.1f, 0, 1));
+    parameters.add(useBlob.set("Use Blob", false));
     parameters.add(T2.set("Blob Thresh: ", 50, 1, 255));
     //parameters.add(T3.set("avgZeroCrossing: ", 20, 0, 500));
     //parameters.add(T4.set("stepDebounce: ", 150, 0, 500));
@@ -111,7 +112,7 @@ void ofApp::draw() {
                 else {
                     // Pressure-sensitive MATRIX values
                     char byteReturned = serial.readByte();
-                    if (counter < sensorNumber - 1)readingArray[counter] = byteReturned;
+                    if (counter < sensorNumber - 1) readingArray[counter] = byteReturned;
                     counter++;
 
                     if (counter > sensorNumber) {
@@ -119,9 +120,11 @@ void ofApp::draw() {
                         timeFromPreviousCall = currentTime;
                         serial.writeByte('A');
                         counter = 0;
-                        if (gray1.bAllocated) {
-                            gray2 = gray1;
-                            calculatedFlow = true;
+                        if (_debugOpticalFlow) {
+                            if (gray1.bAllocated) {
+                                gray2 = gray1;
+                                calculatedFlow = true;
+                            }
                         }
                     }
                 }
@@ -132,7 +135,7 @@ void ofApp::draw() {
         if (_debugOpticalFlow) OpenCV(); 
 
         // Live Centroid calculation
-        vec2 sum = vec2(0, 0);
+        vec2 sum = vec2(0, 0); 
         int total = 0;
         for (int i = 0; i < sensorsBase; i++) {
             for (int j = 0; j < sensorsBase; j++) {
@@ -142,8 +145,8 @@ void ofApp::draw() {
                 }
             }
         }
-        int smoothingCentroid = 10;
-        if (tempCurrentCentroid.size() > smoothingCentroid - 1) tempCurrentCentroid.pop_back();
+        int centroidWindowSize = 10;
+        if (tempCurrentCentroid.size() > centroidWindowSize - 1) tempCurrentCentroid.pop_back();
         if (total != 0) tempCurrentCentroid.push_front(sum / total);
         vec2 curr;
         vec2 HighestCentroid;
@@ -152,7 +155,7 @@ void ofApp::draw() {
                 HighestCentroid = tempCurrentCentroid[i];
             curr += tempCurrentCentroid[i];
         }
-        if (tempCurrentCentroid.size() == smoothingCentroid)
+        if (tempCurrentCentroid.size() == centroidWindowSize)
             currentCentroid = (curr - HighestCentroid) / (tempCurrentCentroid.size() - 1);
 
 
@@ -207,11 +210,11 @@ void ofApp::draw() {
 #pragma region ProcessData
     //MovementDetector();
     MovementDetector2();
-    //blobDetection();
+    if (useBlob)blobDetection();
     //SpeedCalculation();
     //FinalSpeedDecision();
-    
-    //calculateOrientation();
+    if (_s > 0) calculateOrientation();
+
 #pragma endregion
 
 #pragma region SendData
@@ -260,7 +263,7 @@ void ofApp::draw() {
         gray1.rotate(90, gray1.getWidth() * 0.5f, gray1.getHeight() * 0.5f);
         gray1.mirror(true,false);
         gray1.draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
-        contourFinder.draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
+        //draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
     }
     //draw Matrix
     if (bigMatrix) drawMatrix(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight());
@@ -431,10 +434,9 @@ void ofApp::MovementDetector() {
 
 void ofApp::MovementDetector2() {
 
-    
     // store current cog
     vec2 _curr = currentCentroid;
-    
+
     // compare curr and prev
     float _dis = distance(_curr, _old) * 3.3f / 100; // convert unit to meters
     _avgDis.push_front(_dis);
@@ -448,44 +450,134 @@ void ofApp::MovementDetector2() {
             disMax = MAX(disMax, _avgDis[i]);
         }
         avgDis -= disMax;
-        avgDis /= disWindow-1;
+        avgDis /= disWindow - 1;
     }
 
-    // if (distance(curr,old) > T) -> state = moving
-    // CoG in movement (FOOT OFF)
-    if (_dis > 0.01f) {
-        _timer2 = currentTime;
-        shiftCentroid = true;
-        _state = 1;
-    }
-    // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
-    else {
+    
+    /*
+        float __vel = 0;
+        _vel.push_front(_dis - _prevS);
+        if (_vel.size() == 30)  _vel.pop_back();
+        for (float _v : _vel) __vel += _v;
 
-        if (currentTime - _timer2 > timeToStop)  {
-            _state = 0;
+        // if (distance(curr,old) > T) -> state = moving
+        // CoG in movement (FOOT OFF)
+        if (_dis > 0.005f) {
+            _dif = __vel - _oldVel;
+            if (_dif > 0) {
+                if (_state == 4 || _state == 0) {
+                    _state = 1; //ascend
+                    _timer2 = currentTime;
+                }
+            }
+            else if (_dif < 0 && _state == 2) {
+                _state = 3; //descend
+                _timer4 = currentTime;
+            }
+            
+        }
+        // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
+        else {
+            if (_state == 1) {
+                if (currentTime - _timer2 > 100 && currentTime - _timer2 < 800) {
+                    _state = 2; // maxheight
+                    _timer2 = currentTime;
+                }
+                else 
+                    _state = 4;
+            }
+            else if (_state == 3) {
+                if (currentTime - _timer4 > 100 && currentTime - _timer4 < 800)
+                    _state = 0; // double support
+                else 
+                    _state = 4;
+            }
+            else if (currentTime - _timer5 > 800) {
+                _state = 4;
+                _timer5 = currentTime;
+            }
         }
         
-    }
+        
+        if (_oldState != _state) {
+            _timer5 = currentTime;
+            switch (_state) {
+            case 0:
+                ofSetColor(ofColor::red); // double support & foot strike
+                cout << "0: Double Support" << endl;
+                break;
+            case 1:
+                ofSetColor(ofColor::green); // ascend
+                cout << "1: Ascend" << endl;
+                break;
+            case 2:
+                ofSetColor(ofColor::yellow); // 0
+                cout << "2: Foot Max Height" << endl;
+                break;
+            case 3:
+                ofSetColor(ofColor::yellow); // descend
+                cout << "3: Descend" << endl;
+                break;
+            
+            case 4:
+                ofSetColor(ofColor::yellow); // descend
+                cout << "4: Error" << endl;
+                break;
+            }
+        
+        }
+        _oldState = _state;
+        */
 
+  
+    _vel.push_front(_dis - _prevS);
+    if (_vel.size() == 30)  _vel.pop_back();
+    float __vel = 0;
+    for (float _v : _vel) __vel += _v;
+    // if (distance(curr,old) > T) -> state = moving
+    // CoG in movement (FOOT OFF)
 
-    switch (_state) {
-    case 0:
-        ofSetColor(ofColor::red);
-        break;
-    case 1:
-        ofSetColor(ofColor::green);
-        break;
-    }
+        if (_dis > 0.005f) {
+            _timer2 = currentTime;
+            float _dif = __vel - _oldVel;
+            //cout << _dif << endl;
+            if (_dif > 0) _state = 1;
+            else if (_dif < 0) _state = 2;
+        }
+        // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
+        else {
+            if (currentTime - _timer2 > 50) {
+                _state = 0;
+            }
+        }
 
-    ofDrawCircle(50, ofGetHeight() * 0.5f,25);
+        text.drawString(ofToString(_state), ofGetWidth() / 2, 180);
+    
+
+        switch (_state) {
+        case 0:
+            ofSetColor(ofColor::red); // double support & foot strike
+            //cout << "Double Support/MaxHeight" << endl;
+            break;
+        case 1:
+            ofSetColor(ofColor::green); // ascend
+            //cout << "Ascend/FootOff" << endl;
+            break;
+        case 2:
+            ofSetColor(ofColor::yellow); // descend
+            //cout << "Descend" << endl;
+            break;
+        }
+    
+    ofDrawCircle(ofGetWidth()-50, ofGetHeight() * 0.5f,25);
+
     
     // store velocity -> (curr-old)/constant  [constant = 1/60]
-    _velocity.push_front(avgDis / constant);
-
+    float timeThisFrame = (float)1 / ofGetFrameRate();
+    _velocity.push_front(avgDis / timeThisFrame);
     
     // state MOVING
-    if (_state == 1) {
-        
+    if (_state == 1 || _state == 2 || _state == 3) {
         // calculate average velocity - maxVel based on CoG displacement
         float maxVel = 0;
         if (_velocity.size() == velWindow) {
@@ -497,6 +589,11 @@ void ofApp::MovementDetector2() {
             _s /= velWindow-1;
             // prevents input errors
             if (avgDis > 0.04f) _s /= avgDis;
+
+            // I THINK I DONT NEED THIS ANYMORE
+            if (_s > 0) {
+                _s -= 0.01f;      
+            }
         }
     }
     // state NOT MOVING
@@ -505,35 +602,26 @@ void ofApp::MovementDetector2() {
         _s = 0;
         _velocity.clear();
         _avgDis.clear();
-    }
-
-    // is moving
-    if (_s > 0) {
-        _s -= 0.1f;
         _timer3 = currentTime;
     }
-    
+
+   
+
+    // prevent sudden stops in the middle of a movement (0.4f is the min speed)
     if (currentTime - _timer2 <= timeToStop) {
-        _s = MAX(_s, 0.4f);
-    }
-    if (currentTime - _timer3 > 150) {
-        LowPass2.process(0);
-        __fs = 0;
+        _s = MAX(_s, ofMap(abs(_timer2 - _timer3),350,800,0.4f,0),true);
     }
 
-    __fs = LowPass2.process(_s);
     _fs = LowPass.process(_s);
+    __fs = LowPass2.process(_fs);
+    
 
-
-    if (_fs < 0.001f) {
+    if (__fs < 0.01f || _fs < 0.01f || _s < 0.01f) {
         _fs = 0;
+        __fs = 0;
         _s = 0;
         LowPass.process(0);
-        //_state = 0;
-        if (!stopped) {
-            timer4 = currentTime;
-            stopped = !stopped;
-        }
+        LowPass2.process(0);
     }
     
     // limit the size of arrays
@@ -542,15 +630,20 @@ void ofApp::MovementDetector2() {
 
     // debug
     string _velFS = ofToString(_fs, 2);
-    text.drawString(_velFS, ofGetWidth() * 0.5f - text.stringWidth(_velFS)*0.5f, ofGetHeight() * 0.5f + text.stringHeight(_velFS) * 0.5f);
+    //text.drawString(_velFS, ofGetWidth() * 0.5f - text.stringWidth(_velFS)*0.5f, ofGetHeight() * 0.5f + text.stringHeight(_velFS) * 0.5f);
+    //text.drawString(ofToString(_fs, 4), ofGetWidth() * 0.5f, ofGetHeight() * 0.5f + 100);
+    //text.drawString(ofToString(_s), ofGetWidth() * 0.5f, ofGetHeight() * 0.5f + 200);
     //text.drawString(ofToString(_dis, 4), ofGetWidth() / 2, 100);
-    //text.drawString(ofToString(movementDetection, 4), ofGetWidth() / 2, 180);
-    //text.drawString(ofToString(_velocity.size()), ofGetWidth() / 2, 260);
+    
+    
+    
 
     // old=curr
     _old = _curr;
+    _prevS = _s;
+    _oldVel = __vel;
+    
 }
-
 
 void ofApp::SpeedCalculation() {
 
@@ -677,6 +770,36 @@ void ofApp::FinalSpeedDecision() {
 }
 #pragma endregion
 
+void ofApp::calculateOrientation() {
+    
+    vec2 D = vec2(0, 0), midC = vec2(0,0), avgB = vec2(0,-1);
+
+    C.push_front(currentCentroid);
+    for (vec2 c : C) midC += c;
+    midC /= C.size();
+    _midC = midC;
+
+    D = normalize(rotate(midC - currentCentroid,90.0f));
+    //D = rotate(normalize(centroid1 - centroid2), 90.0f);
+
+    if (dot(avgB, D) >= 0) B.push_front(1 * D);
+    else B.push_front(-1 * D);
+    for (vec2 b : B) avgB += b;
+    avgB /= B.size();
+    avgB = normalize(avgB);
+    _avgB = avgB;
+    ofPushMatrix();
+    ofPushStyle();
+    ofSetLineWidth(ofGetHeight() * .05f);
+    ofTranslate(ofGetWidth() / 2, ofGetHeight() / 2);
+    ofDrawArrow(vec3(0,0,0), vec3(avgB,0) * ofGetHeight()*.2f, ofGetHeight() * .05f);
+    ofPopStyle();
+    ofPopMatrix();
+    
+    if (C.size() == windowSizeC) C.pop_back();
+    if (B.size() == windowSizeB) B.pop_back();
+}
+/*
 #pragma region OrientationMethods
 void ofApp::calculateOrientation() {
     // ORIENTATION ////////
@@ -756,7 +879,7 @@ void ofApp::calculateOrientation() {
     //    prevLong2 = currentLong2;
     //}
 
-}
+}*/
 
 void ofApp::blobDetection() {
     vector<FootBlob> currentBlobs;
@@ -846,38 +969,50 @@ void ofApp::blobDetection() {
             }
         }
     }
-    vec2 biggest;
-    vec2 secondBiggest;
-    if (blobs.size() > 2) {
-        for (int i = 0; i < blobs.size(); i++) {
-            if (biggest.x < blobs[i].size()) {
-                biggest.x = blobs[i].size();
-                biggest.y = i;
-            }
-        }
-        for (int i = 0; i < blobs.size(); i++) {
-            if (blobs[i].size() < biggest.x) {
-                if (secondBiggest.x < blobs[i].size()) {
-                    secondBiggest.x = blobs[i].size();
-                    secondBiggest.y = i;
-                }
-            }
-        }
-        centroid1 = blobs[biggest.y].getCenter();
-        centroid2 = blobs[secondBiggest.y].getCenter();
-    }
-    else if (blobs.size() == 2) {
-        centroid1 = blobs[0].getCenter();
-        centroid2 = blobs[1].getCenter();
-    }
-    teta.push_front(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
-    if (teta.size() > 60) teta.pop_back();
 
+    // sort blobs by size values
+    float maxSize = 0;
+    int maxIndex;
+    //if (blobs.size() == 4) {
+    //    ofSort(blobs, sortBySize(blobs));
 
-    numOfFoot = currentBlobs.size();
+    //    for (int i; i < blobs.size(); i++) cout << i << " : "<< blobs[i].size() << endl;
+    //    
+    
+
+    
+
+    //vec2 biggest;
+    //vec2 secondBiggest;
+    //if (blobs.size() > 2) {
+    //    for (int i = 0; i < blobs.size(); i++) {
+    //        if (biggest.x < blobs[i].size()) {
+    //            biggest.x = blobs[i].size();
+    //            biggest.y = i;
+    //        }
+    //    }
+    //    for (int i = 0; i < blobs.size(); i++) {
+    //        if (blobs[i].size() < biggest.x) {
+    //            if (secondBiggest.x < blobs[i].size()) {
+    //                secondBiggest.x = blobs[i].size();
+    //                secondBiggest.y = i;
+    //            }
+    //        }
+    //    }
+    //    centroid1 = blobs[biggest.y].getCenter();
+    //    centroid2 = blobs[secondBiggest.y].getCenter();
+    //}
+    //else if (blobs.size() == 2) {
+    //    centroid1 = blobs[0].getCenter();
+    //    centroid2 = blobs[1].getCenter();  
+    //}
+    ////teta.push_front(ofRadToDeg(atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x)));
+    //if (teta.size() > 60) teta.pop_back();
+
     //text.drawString(ofToString(numOfFoot), 100, 100);
 }
 #pragma endregion
+
 
 #pragma region DrawMethods
 void ofApp::drawMatrix(int startingX, int startingY, int size) {
@@ -924,6 +1059,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
                     }
                     ofPopStyle();
                 }*/
+                
             }
             else {
                 ofColor pressureColor = ReadingMapped;
@@ -952,22 +1088,7 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
                      startingY + (points[i].y * spacing),
                      spacing / 3);
 
-        //ofDrawArrow(vec3(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing, 0), vec3(startingX + points[i].x * spacing, startingY + points[i].y * spacing, 0), 1);
-    }
-    if (distances.size() > 5) {
-        ofSetColor(ofColor::yellow);
-        ofDrawLine(vec2(startingX + distances[0].x * spacing, startingY + distances[0].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
-        ofSetColor(ofColor::cyan);
-        ofDrawLine(vec2(startingX + distances[1].x * spacing, startingY + distances[1].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
-        ofSetColor(ofColor::white);
-        ofDrawLine(vec2(startingX + distances[distances.size() - 1].x * spacing, startingY + distances[distances.size() - 1].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
-        ofSetColor(ofColor::red);
-        ofDrawLine(vec2(startingX + distances[distances.size() - 2].x * spacing, startingY + distances[distances.size() - 2].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
-        ofSetColor(ofColor::purple);
-        ofDrawLine(vec2(startingX + distances[distances.size() - 3].x * spacing, startingY + distances[distances.size() - 3].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
-        ofSetColor(ofColor::pink);
-        ofDrawLine(vec2(startingX + distances[distances.size() - 4].x * spacing, startingY + distances[distances.size() - 4].y * spacing), vec2(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing));
-    }
+     }
 
 
     // draw centroids
@@ -992,6 +1113,18 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     }
     stepsLine.draw();
 
+    ofPushStyle();
+    ofSetColor(ofColor::white);
+    ofNoFill();
+    ofDrawCircle(startingX + (currentCentroid.x * spacing),
+        startingY + (currentCentroid.y * spacing),
+        spacing / 3);
+    ofFill();
+    ofSetColor(ofColor::red);
+    ofDrawCircle(startingX + (currentCentroid.x * spacing),
+        startingY + (currentCentroid.y * spacing),
+        spacing / 6);
+    ofPopStyle();
 
     if (_debugNewMethod) {
         ofNoFill();
@@ -1008,17 +1141,20 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
             startingY + (avgCentroid.y * spacing),
             spacing / 3);
         ofSetColor(ofColor::red);
-        ofDrawCircle(startingX + (currentCentroid.x * spacing),
-            startingY + (currentCentroid.y * spacing),
-            spacing / 8);
         ofDrawCircle(startingX + (previousCentroid.x * spacing),
             startingY + (currentCentroid.y * spacing),
             spacing / 8);
+        
         ofPolyline speedLine;
         speedLine.addVertex(startingX + currentCentroid.x * spacing, startingY + currentCentroid.y * spacing);
         speedLine.addVertex(startingX + previousCentroid.x * spacing, startingY + previousCentroid.y * spacing);
         speedLine.draw();
     }
+
+
+    // show average centroid (100 window)
+    ofSetColor(ofColor::purple);
+    ofDrawCircle(vec2(startingX, startingY) + _midC * spacing, 5);
 
     if (showPainting) {
         centroidPainting.addVertex(ofPoint(startingX + (avgCentroid.x * spacing), startingY + (avgCentroid.y * spacing)));
@@ -1026,22 +1162,6 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
         ofSetColor(ofColor::fuchsia);
         centroidPainting.draw();
     }
-
-    // FRONT DIRECTION
-    if (teta.size() > 0) {
-        ofPushMatrix();
-        ofPushStyle();
-        ofSetLineWidth(10);
-        ofTranslate((startingX + size) * 0.5f, (startingY + size) * 0.5f);
-        float _teta=0;
-        for (float b : teta) _teta += b;
-        _teta /= teta.size();
-        ofRotateDeg(_teta);
-        ofDrawArrow(vec3(0, 150, 0), vec3(0, -150, 0), 20);
-        ofPopStyle();
-        ofPopMatrix();
-    }
-
 
     ofPopMatrix();
     ofPopStyle();
@@ -1142,7 +1262,7 @@ void ofApp::OpenCV() {
     ofPixels pixel;
     pixel.setFromPixels(readingArray, 16, 16, OF_IMAGE_GRAYSCALE);
     gray1 = pixel;
-    contourFinder.findContours(gray1, 1, 5, 2, false, true);
+    //contourFinder.findContours(gray1, 1, 5, 2, false, true);
     /*if (gray2.bAllocated) {
         Mat img1 = cvarrToMat(gray1.getCvImage());
         Mat img2 = cvarrToMat(gray2.getCvImage());
@@ -1167,6 +1287,8 @@ void ofApp::oscSend() {
     ofxOscMessage m;
     m.setAddress("/walkingpad");
     m.addFloatArg(MAX(__fs * 10,0)); //theSpeed
+    m.addFloatArg(_avgB.x);
+    m.addFloatArg(_avgB.y);
     //m.addFloatArg(theSpeed); //theSpeed
     //m.addFloatArg(movementDetection);
     //m.addBoolArg(jump);
