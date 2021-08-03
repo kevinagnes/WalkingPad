@@ -13,7 +13,7 @@ void ofApp::setup() {
     lpf.initialize(60, 3);
     finalS.initialize(60, 2);
     LowPass.initialize(60, 5);
-    LowPass2.initialize(60, 2);
+    LowPass2.initialize(60, 1.2f);
     // simulate variables smoothers
     lpfX.initialize(60, 3); lpfY.initialize(60, 3); lpfN.initialize(60, 3);
     // font setup
@@ -34,14 +34,14 @@ void ofApp::setup() {
     parameters.add(T4.set("turningDelay: ", 500, 0, 1000));
     parameters.add(_constant.set("CONSTANT: ", 1, 0, 3));
     parameters.add(_debug.set("showDebug", false));
-    parameters.add(_showContourFinder.set("showContourFinder", true));
+    parameters.add(_showContourFinder.set("showContourFinder", false));
     parameters.add(_debugNewMethod.set("showCentroid", false));
     parameters.add(bigMatrix.set("show Big Matrix", false));
     parameters.add(showPainting.set("showPainting", false));
     parameters.add(showX.set("X CoG", false));
     parameters.add(showY.set("Y CoG", false));
-    parameters.add(showSpeed.set("Speed", false));
-    parameters.add(showSpeedMul.set("SpeedMultiplier", false));
+    parameters.add(showSpeed.set("Speed", true));
+    parameters.add(showSpeedMul.set("SpeedMultiplier", true));
     parameters.add(showAvg.set("ZeroCrossingLine", false));
     parameters.add(showNas.set("NumberOfActiveSensors", false));
     gui.setup(parameters);
@@ -384,182 +384,80 @@ void ofApp::MovementDetector() {
 
 void ofApp::MovementDetector2() {
 
-    // store current cog
-    vec2 _curr = currentCentroid;
+    // store current cog and convert it to meters
+    // 3.3cm is the distance between sensors
+    vec2 _curr = currentCentroid * 3.3f * 0.01f;
 
-    // compare curr and prev
-    float _dis = distance(_curr, _old) * 3.3f / 100; // convert unit to meters
-    _avgDis.push_front(_dis);
+    // compare curr and prev;
+    float _dis = distance(_curr, _old);
 
-    // get _avgDif - maxDif
-    float avgDis = _dis;
-    float disMax = 0;
-    if (_avgDis.size() == disWindow) {
-        for (int i = 0; i < disWindow; i++) {
-            avgDis += _avgDis[i];
-            disMax = MAX(disMax, _avgDis[i]);
-        }
-        avgDis -= disMax;
-        avgDis /= disWindow - 1;
-    }
-
-    
-    /*
-        float __vel = 0;
-        _vel.push_front(_dis - _prevS);
-        if (_vel.size() == 30)  _vel.pop_back();
-        for (float _v : _vel) __vel += _v;
-
-        // if (distance(curr,old) > T) -> state = moving
-        // CoG in movement (FOOT OFF)
-        if (_dis > 0.005f) {
-            _dif = __vel - _oldVel;
-            if (_dif > 0) {
-                if (_state == 4 || _state == 0) {
-                    _state = 1; //ascend
-                    _timer2 = currentTime;
-                }
-            }
-            else if (_dif < 0 && _state == 2) {
-                _state = 3; //descend
-                _timer4 = currentTime;
-            }
-            
-        }
-        // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
-        else {
-            if (_state == 1) {
-                if (currentTime - _timer2 > 100 && currentTime - _timer2 < 800) {
-                    _state = 2; // maxheight
-                    _timer2 = currentTime;
-                }
-                else 
-                    _state = 4;
-            }
-            else if (_state == 3) {
-                if (currentTime - _timer4 > 100 && currentTime - _timer4 < 800)
-                    _state = 0; // double support
-                else 
-                    _state = 4;
-            }
-            else if (currentTime - _timer5 > 800) {
-                _state = 4;
-                _timer5 = currentTime;
-            }
-        }
-        
-        
-        if (_oldState != _state) {
-            _timer5 = currentTime;
-            switch (_state) {
-            case 0:
-                ofSetColor(ofColor::red); // double support & foot strike
-                cout << "0: Double Support" << endl;
-                break;
-            case 1:
-                ofSetColor(ofColor::green); // ascend
-                cout << "1: Ascend" << endl;
-                break;
-            case 2:
-                ofSetColor(ofColor::yellow); // 0
-                cout << "2: Foot Max Height" << endl;
-                break;
-            case 3:
-                ofSetColor(ofColor::yellow); // descend
-                cout << "3: Descend" << endl;
-                break;
-            
-            case 4:
-                ofSetColor(ofColor::yellow); // descend
-                cout << "4: Error" << endl;
-                break;
-            }
-        
-        }
-        _oldState = _state;
-        */
-
-  
-    _vel.push_front(_dis - _prevS);
-    if (_vel.size() == 30)  _vel.pop_back();
-    float __vel = 0;
-    for (float _v : _vel) __vel += _v;
     // if (distance(curr,old) > T) -> state = moving
     // CoG in movement (FOOT OFF)
-
-        if (_dis > 0.005f) {
+    if (_dis > 0.005f) {
+        if (currentTime - _timer1 > 15) {
             _timer2 = currentTime;
-            float _dif = __vel - _oldVel;
-            //cout << _dif << endl;
-            if (_dif > 0) _state = 1;
-            else if (_dif < 0) _state = 2;
+            _state = 1; // FOOT-OFF
         }
-        // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
-        else {
-            if (currentTime - _timer2 > 50) {
-                _state = 0;
+        
+    }
+    // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
+    else {
+        if (currentTime - _timer2 > 15) {
+            _timer1 = currentTime;
+            _state = 0;
+        }
+    }
+
+    // if changed from FOOT OFF -> MAX HEIGHT
+    // store the Centroid = Foot fall
+    if (_oldState != _state) {
+        if (_oldState == 1) {
+            if (footFall.size() == 0) footFall.push_front(_curr);
+            else {
+                if (distance(footFall[0], _curr) > 0.1f) footFall.push_front(_curr);
             }
         }
+    }
 
-        //text.drawString(ofToString(_state), ofGetWidth() / 2, 180);
-    
+    // only store two foot falls
+    if (footFall.size() > 2) footFall.pop_back();
 
-        switch (_state) {
-        case 0:
-            ofSetColor(ofColor::red); // double support & foot strike
-            //cout << "Double Support/MaxHeight" << endl;
-            break;
-        case 1:
-            ofSetColor(ofColor::green); // ascend
-            //cout << "Ascend/FootOff" << endl;
-            break;
-        case 2:
-            ofSetColor(ofColor::yellow); // descend
-            //cout << "Descend" << endl;
-            break;
-        }
-    
+    // debug state
+    switch (_state) {
+    case 0:
+        ofSetColor(ofColor::red); // double support & foot strike
+        //cout << "Double Support/MaxHeight" << endl;
+        break;
+    case 1:
+        ofSetColor(ofColor::green); // Foot-Off
+        //cout << "Ascend/FootOff" << endl;
+        break;
+    }
     ofDrawCircle(ofGetWidth()-50, ofGetHeight() * 0.5f,25);
 
     
     // store velocity -> (curr-old)/constant  [constant = 1/60]
+    cout << (float)1 / ofGetFrameRate() << endl;
     float timeThisFrame = (float)1 / ofGetFrameRate();
-    _velocity.push_front(avgDis / timeThisFrame);
+    float displacementThisFrame = _dis / timeThisFrame;
     
     // state MOVING
-    if (_state == 1 || _state == 2 || _state == 3) {
-        // calculate average velocity - maxVel based on CoG displacement
-        float maxVel = 0;
-        if (_velocity.size() == velWindow) {
-            for (int i = 0; i < velWindow; i++) {
-                _s += _velocity[i];
-                maxVel = MAX(maxVel, _velocity[i]);
-            }
-            _s -= maxVel;
-            _s /= velWindow-1;
-            // prevents input errors
-            if (avgDis > 0.04f) _s /= avgDis;
-
-            // I THINK I DONT NEED THIS ANYMORE
-            if (_s > 0) {
-                _s -= 0.01f;      
-            }
+    if (_state == 1) {
+        // calculate speed -> displacementThisFrame/distBetweenFootFalls
+        if (footFall.size() == 2) {
+            _s = displacementThisFrame / distance(footFall[0], footFall[1]);
         }
     }
     // state NOT MOVING
     else {
         LowPass2.process(0);
         _s = 0;
-        _velocity.clear();
-        _avgDis.clear();
         _timer3 = currentTime;
     }
 
-   
-
     // prevent sudden stops in the middle of a movement (0.4f is the min speed)
     if (currentTime - _timer2 <= timeToStop) {
-        _s = MAX(_s, ofMap(abs(_timer2 - _timer3),350,800,0.4f,0),true);
+        _s = MAX(_s, ofMap(abs(_timer2 - _timer3),350,800,2.5f,0),true);
     }
 
     _fs = LowPass.process(_s);
@@ -572,26 +470,11 @@ void ofApp::MovementDetector2() {
         _s = 0;
         LowPass.process(0);
         LowPass2.process(0);
-    }
-    
-    // limit the size of arrays
-    if (_velocity.size() >= velWindow) _velocity.pop_back();
-    if (_avgDis.size()   >= disWindow) _avgDis.pop_back();
-
-    // debug
-    string _velFS = ofToString(_fs, 2);
-    //text.drawString(_velFS, ofGetWidth() * 0.5f - text.stringWidth(_velFS)*0.5f, ofGetHeight() * 0.5f + text.stringHeight(_velFS) * 0.5f);
-    //text.drawString(ofToString(_fs, 4), ofGetWidth() * 0.5f, ofGetHeight() * 0.5f + 100);
-    //text.drawString(ofToString(_s), ofGetWidth() * 0.5f, ofGetHeight() * 0.5f + 200);
-    //text.drawString(ofToString(_dis, 4), ofGetWidth() / 2, 100);
-    
-    
-    
+    }    
 
     // old=curr
     _old = _curr;
-    _prevS = _s;
-    _oldVel = __vel;
+    _oldState = _state;
     
 }
 
@@ -1071,6 +954,16 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     ofSetColor(ofColor::purple);
     ofDrawCircle(vec2(startingX, startingY) + _midC * spacing, 5);
 
+    //if (footFall.size() == 2) {
+    //    ofSetColor(ofColor::green);
+    //    ofDrawCircle(startingX + (footFall[0].x * spacing),
+    //        startingY + (footFall[0].y * spacing),
+    //        spacing / 6);
+    //    ofDrawCircle(startingX + (footFall[1].x * spacing),
+    //        startingY + (footFall[1].y * spacing),
+    //        spacing / 6);
+    //}
+
     if (showPainting) {
         centroidPainting.addVertex(ofPoint(startingX + (currentCentroid.x * spacing), startingY + (currentCentroid.y * spacing)));
         if (centroidPainting.size() > (int)ofGetFrameRate() * 2) centroidPainting.removeVertex(0);
@@ -1096,8 +989,8 @@ void ofApp::drawGraph(float sX, float sY, float avgX, float avgY, int sN, float 
     npt.set(xPos, ofMap(sN, 0, sensorNumber, ofGetHeight(), 0, true), 2);
     /*spt.set(xPos, ofMap(theSpeed, 0, 20, ofGetHeight(), 0, true), 2);
     smpt.set(xPos, ofMap(movementDetection, 0, 9, ofGetHeight(), 0, true), 2);*/
-    spt.set(xPos, ofMap(__fs, 0, 3, ofGetHeight(), 0, true), 2);
-    smpt.set(xPos, ofMap(_fs, 0, 3, ofGetHeight(), 0, true), 2);
+    spt.set(xPos, ofMap(__fs, 0, 12, ofGetHeight(), 0, true), 2);
+    smpt.set(xPos, ofMap(_fs, 0, 12, ofGetHeight(), 0, true), 2);
     lineX.addVertex(xpt);
     lineAvgX.addVertex(avx);
     lineY.addVertex(ypt);
@@ -1514,7 +1407,7 @@ void ofApp::oscSend() {
     // OSC send
     ofxOscMessage m;
     m.setAddress("/walkingpad");
-    m.addFloatArg(MAX(__fs * 10,0)); //theSpeed
+    m.addFloatArg(MAX(__fs*2,0)); //theSpeed
     m.addFloatArg(finalDirection.x);
     m.addFloatArg(finalDirection.y);
     //m.addFloatArg(theSpeed); //theSpeed

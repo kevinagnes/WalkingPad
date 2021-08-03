@@ -177,7 +177,7 @@ class ofApp : public ofBaseApp{
 		float ThresholdAngle = HALF_PI;
 		float minThreshold = 40;
 		bool _turning = false;
-		bool useTWO = true , useFOUR = false;
+		bool useTWO = false , useFOUR = true;
 		vec2 CENTER1,CENTER2;
 		int cvTimer = 0, cvDebounce = 25;
 		ofxLPF dirX, dirY;
@@ -199,16 +199,14 @@ class ofApp : public ofBaseApp{
 		deque<vec2> C, B;
 		vec2 _midC, _avgB;
 		int windowSizeC = 150, windowSizeB = 60;
+
+
 		//movement detector 2
-		deque<float> _velocity;
-		deque<float> _avgDis;
-		int velWindow = 10;
-		int disWindow = 10;
 		vec2 _old;
 		int _state = 0, _oldState = 0;
 		float _s = 0, _prevS = 0, _oldVel = 0, _dif = 0;
-		deque<float> _vel;
 		int _timer1, _timer2, _timer3, _timer4, _timer5, _timer6, timeToStop = 2000;
 		float _fs = 0, __fs;
 		ofxLPF LowPass,LowPass2;
+		deque<vec2>footFall;
 };
