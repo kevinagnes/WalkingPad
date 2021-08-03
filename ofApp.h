@@ -8,8 +8,9 @@
 #include "ofxLPF.h"
 #include "ofConstants.h"
 #include "ofxEasing.h"
-#include "ofxOpenCv.h"
+#include "ofxCv.h"
 #include "FootBlob.h"
+//#include "ofxOpenCv.h"
 
 using namespace std;
 using namespace rapidlib;
@@ -20,7 +21,7 @@ class ofApp : public ofBaseApp{
 
 	public:
 		void setup();
-		void update();
+		//void update();
 		void draw();
 		void setupDevices(string COM = 0, int Baud = 0);
 		void keyPressed(int key);
@@ -36,6 +37,10 @@ class ofApp : public ofBaseApp{
 		void csvRecord();
 		void blobDetection();
 		void calculateOrientation();
+		void drawMiniCoG(int rectSize);
+		void drawGrid();
+		void drawRecordingSquare();
+		void drawOrientation();
 		//bool calculateOrientation();
 		bool setupCompleted = false;
 		bool _calibrateNow = false;
@@ -51,7 +56,8 @@ class ofApp : public ofBaseApp{
 		ofParameter<bool> confirm, simulating;
 		ofParameterGroup parameters;
 		ofParameter<int> T2, T3, T4,T5;
-		ofParameter<bool> _debugOpticalFlow, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix, showPainting, useBlob;
+		ofParameter<float> dT;
+		ofParameter<bool> _showContourFinder, _debugNewMethod, _debug, showNas, showSpeed, showSpeedMul, showAvg, showX,showY, bigMatrix, showPainting, useBlob;
 		
 		ofColor col[2] = { ofColor(45,45,45), ofColor::red };
 		ofxOscSender osc;
@@ -133,7 +139,6 @@ class ofApp : public ofBaseApp{
 		deque<vec2>points, _points;
 		vector<vec3> distances;
 		vec2 centroid1, centroid2, _centroid1, _centroid2;
-		//rapidStream<float> _centroid1_x, _centroid1_y, _centroid2_x, _centroid2_y;
 		int timerrr=0;
 		bool crossed = false;
 		bool switcher = false;
@@ -154,18 +159,34 @@ class ofApp : public ofBaseApp{
 		int T6 = 50;
 
 		// OpenCV OpticalFlow Idea
-		bool calculatedFlow;
-		int flowTime=0;
-		ofParameter<float> T1;
-		ofxCvColorImage currentColor;		//First and second original images
-		ofxCvFloatImage flowX, flowY;		//Resulted optical flow in x and y axes
-		ofxCvGrayscaleImage gray1, gray2;
+		ofxCv::ContourFinder contourFinder;
+		ofImage img;
+		ofParameter<float> minArea, maxArea, threshold;
+		ofParameter<bool> holes;
+		deque<vec2> movingAvgDir, movingAvgDirSecondary;
+		int avgDirWin = 1;
+		vec2 direction1 = vec2(0, 0), direction2 = vec2(0, 0), oldDirection = vec2(0, 0), finalDirection = vec2(0,0), preDirection = vec2(0, 0) ;
+		vec2 Foot1a = vec2(0, 0), Foot2a = vec2(0, 0), Foot1b = vec2(0, 0), Foot2b = vec2(0, 0);
+		vec2 oldDirection1 = vec2(0, 0), oldDirection2 = vec2(0, 0);
+		vec2 primary = vec2(0, 0);
+		vec2 secondary = vec2(0, 0); 
+		vec2 contours[4];
+		vector<vector<cv::Point>> quads;
+		vector<vector<vector<vec2>>> Foot;
+		float _angleBetweenFeet=0, _biggestDistance = 0;
+		float ThresholdAngle = HALF_PI;
+		float minThreshold = 40;
+		bool _turning = false;
+		bool useTWO = true , useFOUR = false;
+		vec2 CENTER1,CENTER2;
+		int cvTimer = 0, cvDebounce = 25;
+		ofxLPF dirX, dirY;
+
+		
 
 		// orientation
 		deque<vec2> stepLocations;
 		vector<FootBlob> blobs;
-		ofxCvBlob blob;
-		ofxCvContourFinder contourFinder;
 		vec2 prevShort, prevLong1, prevLong2,previousCentroid1,previousCentroid2;
 		ofxLPF a1, a2, a3;
 		bool xWin = false;

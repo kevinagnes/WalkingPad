@@ -6,36 +6,42 @@ void ofApp::setup() {
     ofBackground(col[0]);
     ofSetBackgroundAuto(true);
     ofSetFrameRate(60);
+
+
+#pragma region GUI_&_InitialVariables
     // Low-pass filter for movoementDetection and finalSpeed
     lpf.initialize(60, 3);
     finalS.initialize(60, 2);
     LowPass.initialize(60, 5);
     LowPass2.initialize(60, 2);
+    // simulate variables smoothers
     lpfX.initialize(60, 3); lpfY.initialize(60, 3); lpfN.initialize(60, 3);
-    text.load("Sono-Bold.ttf",64);
-
-#pragma region GUI_&_InitialVariables
+    // font setup
+    text.load("Sono-Bold.ttf", 64);
     ofxGuiSetDefaultHeight(20);
     ofxGuiSetDefaultWidth(150);
     parameters.setName("WalkingPad");
-    parameters.add(T1.set("OpticalFlow: ", 0.1f, 0, 1));
-    parameters.add(useBlob.set("Use Blob", false));
+    parameters.add(minArea.set("Min area", 14, 1, 100));
+    parameters.add(maxArea.set("Max area", 60, 1, 500));
+    parameters.add(threshold.set("Threshold", 32, 0, 255));
+    parameters.add(holes.set("Holes?", true));
+    parameters.add(dT.set("maxDistance: ", 300, 0, 400));
+    //parameters.add(T1.set("OpticalFlow: ", 0.1f, 0, 1));
     parameters.add(T2.set("Blob Thresh: ", 50, 1, 255));
     //parameters.add(T3.set("avgZeroCrossing: ", 20, 0, 500));
     //parameters.add(T4.set("stepDebounce: ", 150, 0, 500));
     //parameters.add(T5.set("ZeroCrossing Thresh: ", 25, 0, 400));
-    parameters.add(T5.set("blobDistance: ", 4, 1, 30));
     parameters.add(T4.set("turningDelay: ", 500, 0, 1000));
     parameters.add(_constant.set("CONSTANT: ", 1, 0, 3));
     parameters.add(_debug.set("showDebug", false));
-    parameters.add(_debugOpticalFlow.set("showOpticalFlow", false));
+    parameters.add(_showContourFinder.set("showContourFinder", true));
     parameters.add(_debugNewMethod.set("showCentroid", false));
     parameters.add(bigMatrix.set("show Big Matrix", false));
     parameters.add(showPainting.set("showPainting", false));
-    parameters.add(showX.set("X CoG", true));
-    parameters.add(showY.set("Y CoG", true));
-    parameters.add(showSpeed.set("Speed", true));
-    parameters.add(showSpeedMul.set("SpeedMultiplier", true));
+    parameters.add(showX.set("X CoG", false));
+    parameters.add(showY.set("Y CoG", false));
+    parameters.add(showSpeed.set("Speed", false));
+    parameters.add(showSpeedMul.set("SpeedMultiplier", false));
     parameters.add(showAvg.set("ZeroCrossingLine", false));
     parameters.add(showNas.set("NumberOfActiveSensors", false));
     gui.setup(parameters);
@@ -47,15 +53,11 @@ void ofApp::setup() {
     par.add(simulating.set("Keyboard Simulating: ", false));
     par.add(confirm.set("OK", false));
     set.setup(par);
-
     currentCentroid = initialCoG;
     dontDraw = false;
-    calculatedFlow = false;
 #pragma endregion 
     
 }
-//--------------------------------------------------------------
-void ofApp::update() {}
 //--------------------------------------------------------------
 void ofApp::draw() {
 
@@ -120,20 +122,12 @@ void ofApp::draw() {
                         timeFromPreviousCall = currentTime;
                         serial.writeByte('A');
                         counter = 0;
-                        if (_debugOpticalFlow) {
-                            if (gray1.bAllocated) {
-                                gray2 = gray1;
-                                calculatedFlow = true;
-                            }
-                        }
                     }
                 }
             }
         }
 
-        // converts readingArray to an openCV image and calculates optical flow
-        if (_debugOpticalFlow) OpenCV(); 
-
+        
         // Live Centroid calculation
         vec2 sum = vec2(0, 0); 
         int total = 0;
@@ -208,89 +202,45 @@ void ofApp::draw() {
 #pragma endregion
 
 #pragma region ProcessData
+    // converts readingArray to an openCV image and calculates optical flow
+    OpenCV();
     //MovementDetector();
     MovementDetector2();
-    if (useBlob)blobDetection();
+    //blobDetection();
     //SpeedCalculation();
     //FinalSpeedDecision();
-    if (_s > 0) calculateOrientation();
-
+    //calculateOrientation();
 #pragma endregion
 
-#pragma region SendData
+#pragma region SendAndStoreData
     oscSend();
+    csvRecord();
 #pragma endregion
 
 #pragma region DrawFunctions
     // draw grid
-    ofPushStyle();
-    for (float y = 0; y < ofGetHeight(); y += ofGetHeight() / 16) {
-        ofSetColor(80, 100);
-        ofDrawLine(0, y, ofGetWidth(), y);
-    }
-    ofPopStyle();
+    drawGrid();
 
     // draw the graph
-    //drawGraph(sX, sY, avX, avY, sN, speed);
-    ofPushStyle();
-    ofSetLineWidth(ofGetHeight()*0.002);
     drawGraph(X, Y, 0, 0, N, speed);
-    ofPopStyle();
 
-    // draw if jump
-    if (jump)    ofDrawCircle(ofGetWidth(), ofGetHeight(), 50);
-
-    // draw if zero crossed
-    if (crossed) ofDrawCircle(ofGetWidth(), 0, 50);
-
-    //draw CoG
-    ofPushMatrix();
-    ofPushStyle();
-    ofTranslate(140, 40);
-    ofSetColor(127);
-    ofNoFill();
+    //draw mini or big matrix
     int rectSize = 70;
-    ofDrawRectangle(-rectSize / 2, -rectSize / 2, rectSize, rectSize);
-    ofDrawCircle(sX / 12, sY / 12, 7);
-    ofFill();
-    ofDrawCircle(X / 12, Y / 12, 4);
-    ofPopStyle();
-    ofPopMatrix();
-
-    //draw OpenCV  
-    //gray1.mirror(true, false);
-    if (_debugOpticalFlow && !simulating) {  
-        gray1.rotate(90, gray1.getWidth() * 0.5f, gray1.getHeight() * 0.5f);
-        gray1.mirror(true,false);
-        gray1.draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
-        //draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight(), ofGetHeight());
-    }
-    //draw Matrix
+    drawMiniCoG(rectSize);
     if (bigMatrix) drawMatrix(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight());
     else drawMatrix(20, 10, rectSize);
 
     // draw recording guide
-    ofPushStyle();
-    ofSetColor(col[toggle]);
-    ofSetLineWidth(10);
-    ofNoFill();
-    ofDrawRectangle(0, 0, ofGetWidth() - 3, ofGetHeight() - 3);
-    ofPopStyle();
+    drawRecordingSquare();
 
-    
+    // draw Orientation
+    if (_showContourFinder) drawOrientation();
 
-    // draw blobs
-    if (blobs.size() > 0) {
-        for (int i = 0; i < blobs.size(); i++) {
-            vec4 pos = blobs[i].draw(ofGetWidth() * .5f - ofGetHeight() * .5f, ofGetHeight() * .5f - ofGetHeight() * .5f, ofGetHeight() / sensorsBase);
-            ofSetColor(ofColor::darkGreen);
-            text.drawString(ofToString(blobs[i].id), (pos.r+pos.b)*.5f,(pos.g + pos.a) * .5f);
-        }
+    ofSetColor(ofColor::red);
+    if (_turning) {
+        ofDrawRectangle(0, 0, 200, 200);
+        _turning = false;
     }
-
-    // draw step winning
-    ofSetColor(cXcYColor);
-    ofDrawRectangle(0 + ofGetHeight() * 0.05f, ofGetHeight() * 0.5f - ofGetHeight() * 0.05f, ofGetHeight() * 0.1f, ofGetHeight() * 0.1f);
 
     // draw GUI
     string info = "[0] Calibrate \n[.] GUI \n[1] CoG \n[2] Speed \n[3] Matrix \n[4] Optical \n[5] Simulate";
@@ -301,7 +251,7 @@ void ofApp::draw() {
     ofPopStyle();
 #pragma endregion
 
-    csvRecord();
+    
 }
 
 #pragma region SpeedMethods
@@ -551,7 +501,7 @@ void ofApp::MovementDetector2() {
             }
         }
 
-        text.drawString(ofToString(_state), ofGetWidth() / 2, 180);
+        //text.drawString(ofToString(_state), ofGetWidth() / 2, 180);
     
 
         switch (_state) {
@@ -768,18 +718,17 @@ void ofApp::FinalSpeedDecision() {
     theSpeed = finalS.process(theSpeed);
     //acceleration.pushToWindow(theSpeed);
 }
-#pragma endregion
 
 void ofApp::calculateOrientation() {
-    
-    vec2 D = vec2(0, 0), midC = vec2(0,0), avgB = vec2(0,-1);
+
+    vec2 D = vec2(0, 0), midC = vec2(0, 0), avgB = vec2(0, -1);
 
     C.push_front(currentCentroid);
     for (vec2 c : C) midC += c;
     midC /= C.size();
     _midC = midC;
 
-    D = normalize(rotate(midC - currentCentroid,90.0f));
+    D = normalize(rotate(midC - currentCentroid, 90.0f));
     //D = rotate(normalize(centroid1 - centroid2), 90.0f);
 
     if (dot(avgB, D) >= 0) B.push_front(1 * D);
@@ -792,10 +741,10 @@ void ofApp::calculateOrientation() {
     ofPushStyle();
     ofSetLineWidth(ofGetHeight() * .05f);
     ofTranslate(ofGetWidth() / 2, ofGetHeight() / 2);
-    ofDrawArrow(vec3(0,0,0), vec3(avgB,0) * ofGetHeight()*.2f, ofGetHeight() * .05f);
+    ofDrawArrow(vec3(0, 0, 0), vec3(avgB, 0) * ofGetHeight() * .2f, ofGetHeight() * .05f);
     ofPopStyle();
     ofPopMatrix();
-    
+
     if (C.size() == windowSizeC) C.pop_back();
     if (B.size() == windowSizeB) B.pop_back();
 }
@@ -880,7 +829,6 @@ void ofApp::calculateOrientation() {
     //}
 
 }*/
-
 void ofApp::blobDetection() {
     vector<FootBlob> currentBlobs;
     int blobCounter = 0;
@@ -888,7 +836,7 @@ void ofApp::blobDetection() {
     for (int i = 0; i < sensorsBase; i++) {
         for (int j = 0; j < sensorsBase; j++) {
             if (readingArray[(i * sensorsBase) + j] > T2) {
-                bool found = false; 
+                bool found = false;
                 if (currentBlobs.size() != 0) {
                     for (int f = 0; f < currentBlobs.size(); f++) {
                         if (currentBlobs[f].IsNear(i, j, T5)) {
@@ -898,9 +846,9 @@ void ofApp::blobDetection() {
                         }
                     }
                 }
-                if (!found) {   
+                if (!found) {
                     FootBlob b;
-                    b.NewBlob(i, j); 
+                    b.NewBlob(i, j);
                     currentBlobs.push_back(b);
                 }
             }
@@ -909,7 +857,7 @@ void ofApp::blobDetection() {
 
     // no blobs currently
     if (blobs.empty() && currentBlobs.size() > 0) {
-        for (int i = 0; i < currentBlobs.size();i++) {
+        for (int i = 0; i < currentBlobs.size(); i++) {
             currentBlobs[i].id = blobCounter;
             blobs.push_back(currentBlobs[i]);
             blobCounter++;
@@ -917,10 +865,10 @@ void ofApp::blobDetection() {
     }
     // Match whatever blobs you can match
     else if (blobs.size() <= currentBlobs.size()) {
-        for (int i = 0; i < blobs.size();i++) {
+        for (int i = 0; i < blobs.size(); i++) {
             float recordD = 10000;
             FootBlob matched;
-            for (int j = 0; j < currentBlobs.size();j++) {
+            for (int j = 0; j < currentBlobs.size(); j++) {
                 vec2 centerB = blobs[i].getCenter();
                 vec2 centerCB = currentBlobs[j].getCenter();
                 float d = distance(centerB, centerCB);
@@ -933,7 +881,7 @@ void ofApp::blobDetection() {
             blobs[i].become(matched);
         }
         // Whatever is left over, make new blobs
-        for (int i = 0;i < currentBlobs.size(); i++) {
+        for (int i = 0; i < currentBlobs.size(); i++) {
             if (!currentBlobs[i].taken) {
                 currentBlobs[i].id = blobCounter;
                 blobs.push_back(currentBlobs[i]);
@@ -942,14 +890,14 @@ void ofApp::blobDetection() {
         }
     }
     else if (blobs.size() > currentBlobs.size()) {
-        for (int i = 0; i < blobs.size();i++) {
+        for (int i = 0; i < blobs.size(); i++) {
             blobs[i].taken = false;
         }
         // Match whatever blobs you can match
-        for (int i = 0; i < currentBlobs.size();i++) {
+        for (int i = 0; i < currentBlobs.size(); i++) {
             float recordD = 10000;
             FootBlob matched;
-            for (int j = 0; j < blobs.size();j++) {
+            for (int j = 0; j < blobs.size(); j++) {
                 blobs[j].taken = false;
                 vec2 centerB = blobs[j].getCenter();
                 vec2 centerCB = currentBlobs[i].getCenter();
@@ -978,9 +926,9 @@ void ofApp::blobDetection() {
 
     //    for (int i; i < blobs.size(); i++) cout << i << " : "<< blobs[i].size() << endl;
     //    
-    
 
-    
+
+
 
     //vec2 biggest;
     //vec2 secondBiggest;
@@ -1013,7 +961,6 @@ void ofApp::blobDetection() {
 }
 #pragma endregion
 
-
 #pragma region DrawMethods
 void ofApp::drawMatrix(int startingX, int startingY, int size) {
     ofPushStyle();
@@ -1026,10 +973,6 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
     float sumX = 0, sumY = 0, avgX = 0, avgY = 0;
     int numOfEntries;
     numOfEntries = 0;
-    if (_debugOpticalFlow && !simulating) {
-        flowXPixels = flowX.getPixelsAsFloats();
-        flowYPixels = flowY.getPixelsAsFloats();
-    }
 
     for (int i = 0; i < sensorsBase; i++) {
         for (int j = 0; j < sensorsBase; j++) {
@@ -1041,40 +984,13 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
             ofDrawRectangle(0, 0, spacing, spacing);
             ofPopStyle();
             float ReadingMapped = ofMap(readingArray[(i * sensorsBase) + j], 0, 80, 0, 255, true);
-            if (_debugOpticalFlow && !simulating) {
-                /*if (calculatedFlow) {
-                    //optical Flow
-                    ofPushStyle();
-                    ofSetLineWidth(3);
-                    ofSetColor(255, 255, 0);
-                    float fx = flowXPixels[(i * sensorsBase) + j];
-                    float fy = flowYPixels[(i * sensorsBase) + j];
-                    //Draw only long vectors
-                    if (fabs(fx) + fabs(fy) > T1) {
-                        ofDrawCircle(-0.5, -0.5, spacing / 10);
-                        ofDrawLine(0, 0, i + fx, j + fy);
-                        numOfEntries += 1;
-                        sumX += fx;
-                        sumY += fy;
-                    }
-                    ofPopStyle();
-                }*/
-                
-            }
-            else {
-                ofColor pressureColor = ReadingMapped;
-                if (ReadingMapped < 100 && _debugNewMethod) pressureColor.a = 50;
-                ofSetColor(pressureColor);
-                ofFill();
-                ofDrawRectangle(0, 0, spacing, spacing);
-            }
-            ofPopMatrix();
+            ofColor pressureColor = ReadingMapped;
+            if (ReadingMapped < 100 && _debugNewMethod) pressureColor.a = 50;
+            ofSetColor(pressureColor);
+            ofFill();
+            ofDrawRectangle(0, 0, spacing, spacing);
+            ofPopMatrix();      
         }
-    }
-
-    if (numOfEntries > 0) {
-        avgX = sumX / numOfEntries;
-        avgY = sumY / numOfEntries;
     }
 
     if (_debug) std::cout << "avgX: " << avgX << endl;
@@ -1151,13 +1067,12 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
         speedLine.draw();
     }
 
-
     // show average centroid (100 window)
     ofSetColor(ofColor::purple);
     ofDrawCircle(vec2(startingX, startingY) + _midC * spacing, 5);
 
     if (showPainting) {
-        centroidPainting.addVertex(ofPoint(startingX + (avgCentroid.x * spacing), startingY + (avgCentroid.y * spacing)));
+        centroidPainting.addVertex(ofPoint(startingX + (currentCentroid.x * spacing), startingY + (currentCentroid.y * spacing)));
         if (centroidPainting.size() > (int)ofGetFrameRate() * 2) centroidPainting.removeVertex(0);
         ofSetColor(ofColor::fuchsia);
         centroidPainting.draw();
@@ -1168,6 +1083,8 @@ void ofApp::drawMatrix(int startingX, int startingY, int size) {
 }
 
 void ofApp::drawGraph(float sX, float sY, float avgX, float avgY, int sN, float speed) {
+    ofPushStyle();
+    ofSetLineWidth(ofGetHeight() * 0.002);
     ofPoint xpt, ypt;
     ofPoint avx, avy;
     ofPoint npt;
@@ -1231,7 +1148,92 @@ void ofApp::drawGraph(float sX, float sY, float avgX, float avgY, int sN, float 
         lineSpeedMul.clear();
         ofBackground(col[0]);
     }
+    ofPopStyle();
+}
 
+void ofApp::drawMiniCoG(int rectSize) {
+    ofPushMatrix();
+    ofPushStyle();
+    ofTranslate(140, 40);
+    ofSetColor(127);
+    ofNoFill();   
+    ofDrawRectangle(-rectSize / 2, -rectSize / 2, rectSize, rectSize);
+    ofDrawCircle(sX / 12, sY / 12, 7);
+    ofFill();
+    ofDrawCircle(X / 12, Y / 12, 4);
+    ofPopStyle();
+    ofPopMatrix();
+}
+
+void ofApp::drawGrid() {
+    ofPushStyle();
+    for (float y = 0; y < ofGetHeight(); y += ofGetHeight() / 16) {
+        ofSetColor(80, 100);
+        ofDrawLine(0, y, ofGetWidth(), y);
+    }
+    ofPopStyle();
+}
+
+void ofApp::drawRecordingSquare() {
+    ofPushStyle();
+    ofSetColor(col[toggle]);
+    ofSetLineWidth(10);
+    ofNoFill();
+    ofDrawRectangle(0, 0, ofGetWidth() - 3, ofGetHeight() - 3);
+    ofPopStyle();
+}
+
+void ofApp::drawOrientation() {
+    ofPushMatrix();
+    ofTranslate(ofGetWidth() * .5f, ofGetHeight() * .5f);
+    //ofRotateY(180);
+    ofRotateX(180);
+    ofTranslate(-ofGetWidth() * .5f, -ofGetHeight() * .5f);
+
+    ofPushMatrix();
+    float scaleFactor = ofMap(ofGetHeight(), 300, 1000, 1, 3.3333f, true);
+    float __size = 150 * scaleFactor;
+    float __x = ofGetWidth() * 0.5f - __size;
+    float __y = ofGetHeight() * 0.5f - __size;    
+    ofTranslate(__x, __y);
+    ofScale(scaleFactor);
+    //ofSetColor(255);
+    //img.draw(0, 0);
+    ofSetColor(0,255,0);
+    contourFinder.draw(); 
+    ofFill();
+    ofSetColor(ofColor::red);
+    if (quads.size() == 2) {
+        for (cv::Point i : quads[0]) ofDrawCircle(vec2(i.x, i.y), 5);
+        for (cv::Point i : quads[1]) ofDrawCircle(vec2(i.x, i.y), 5);
+    }
+    ofDrawArrow(vec3(Foot1a, 0), vec3(Foot1b, 0), 10);
+    ofDrawArrow(vec3(Foot2a, 0), vec3(Foot2b, 0), 10); 
+    ofNoFill();
+    ofSetColor(ofColor::white);
+    ofDrawCircle(Foot1a, 3);
+    ofDrawCircle(Foot1b, 3);
+    ofDrawCircle(Foot2a, 3);
+    ofDrawCircle(Foot2b, 3);
+    ofSetColor(ofColor::yellow);
+    ofDrawCircle(CENTER1, 3);
+    ofDrawCircle(CENTER2, 3);
+    ofFill();
+    ofPopMatrix();
+
+    ofPushMatrix();
+    ofTranslate(ofGetWidth()*0.5f,ofGetHeight()*0.5f);
+    //text.drawString(ofToString((direction1 + direction2) * 0.5f,1), 0, 0);
+    //text.drawString(ofToString(_angleBetweenFeet,1),0, 150);
+    //text.drawString(ofToString(_biggestDistance, 1), 0, 250);
+    ofRotate(180);
+    ofSetColor(ofColor::blue);
+    ofDrawArrow(vec3(0, 0, 0), vec3(direction1, 0) * 150, 10);
+    ofDrawArrow(vec3(0, 0, 0), vec3(direction2, 0) * 150, 10);
+    ofSetColor(ofColor::gold);
+    ofDrawArrow(vec3(0, 0, 0), vec3(finalDirection, 0) * 150, 10);
+    ofPopMatrix();
+    ofPopMatrix();
 }
 #pragma endregion
 
@@ -1260,26 +1262,252 @@ void ofApp::tryFirstConnection() {
 
 void ofApp::OpenCV() {
     ofPixels pixel;
+    int resize = 300;
+    // create a pixel array from pressure values
     pixel.setFromPixels(readingArray, 16, 16, OF_IMAGE_GRAYSCALE);
-    gray1 = pixel;
-    //contourFinder.findContours(gray1, 1, 5, 2, false, true);
-    /*if (gray2.bAllocated) {
-        Mat img1 = cvarrToMat(gray1.getCvImage());
-        Mat img2 = cvarrToMat(gray2.getCvImage());
-        Mat flow;                        //Image for flow
-        //Computing optical flow (visit https://goo.gl/jm1Vfr for explanation of parameters)
-        calcOpticalFlowFarneback(img1, img2, flow, 0.5, 1, 3, 5, 5, 1.1, 0);
-        //Split flow into separate images
-        vector<Mat> flowPlanes;
-        split(flow, flowPlanes);
-        //Copy float planes to ofxCv images flowX and flowY
-        //we call this to convert back from native openCV to ofxOpenCV data types
-        IplImage iplX(flowPlanes[0]);
-        //cvConvert(flowX, iplX);
-        flowX = &iplX;
-        IplImage iplY(flowPlanes[1]);
-        flowY = &iplY;
-    }*/
+    // mirror and rotate for facing north
+    pixel.mirror(false, false);
+    pixel.rotate90(1);
+    // convert array to image
+    img = pixel;
+    // resize to 300x300 pixels (adds blur, good for CV)
+    img.resize(resize, resize);
+    // parameters for ContourFinder
+    contourFinder.setMinAreaRadius(minArea);
+    contourFinder.setMaxAreaRadius(maxArea);
+    contourFinder.setThreshold(threshold);
+    contourFinder.setFindHoles(holes);
+    contourFinder.findContours(img);
+
+    vec2 _forward = vec2(0, 0);
+    vec2 center = vec2(150, 150);
+
+
+    // 2 blobs prediction
+    if (useTWO && currentTime - cvTimer > cvDebounce) {
+        int size = contourFinder.size();
+        if (size > 0) {
+            
+            CENTER1 = ofxCv::toOf(contourFinder.getCenter(0));
+            if (size>1) CENTER2 = ofxCv::toOf(contourFinder.getCenter(1));
+
+            // clear previous and create the vector of quads
+            quads.clear();
+            for (int i = 0; i < size; i++) {
+                quads.push_back(contourFinder.getFitQuad(i));
+            }
+            
+            // we are looking the pair of foot
+            int quadSize = quads.size();
+            if (quadSize > 0) {
+                vector<vector<vec2>> feet;
+                vec2 direction[2];
+                for (int i = 0; i < quadSize; i++) {
+                    // convert cv::point to vec2
+                    vector<cv::Point> quad = quads[i];
+                    vector<vec2>  quadPoints;
+                    for (cv::Point p : quad) quadPoints.push_back(vec2(p.x, p.y));
+
+                    // get distances from points
+                    vector<float> quadDist;
+                    quadDist.push_back(distance(quadPoints[0], quadPoints[1]));
+                    quadDist.push_back(distance(quadPoints[0], quadPoints[2]));
+                    quadDist.push_back(distance(quadPoints[0], quadPoints[3]));
+                    quadDist.push_back(distance(quadPoints[1], quadPoints[2]));
+                    quadDist.push_back(distance(quadPoints[1], quadPoints[3]));
+                    quadDist.push_back(distance(quadPoints[2], quadPoints[3]));
+
+                    // find the biggest and smallest distances and stores their index
+                    float maxDist = 0;
+                    int maxDistIndex = 7;
+                    int minDist = 1000;
+                    int minDistIndex = 7;
+                    for (int j = 0; j < 6; j++) {
+                        if (quadDist[j] > maxDist) {
+                            maxDist = quadDist[j];
+                            maxDistIndex = j;
+                        }
+                        if (quadDist[j] < minDist) {
+                            minDist = quadDist[j];
+                            minDistIndex = j;
+                        }
+                    }
+                    float maxminDif = maxDist - minDist;
+                    //cout << "maxminDif  " <<maxminDif << endl;
+                    if (maxminDif < minThreshold) return;
+                    if (maxDist < 50) return;
+
+                    // saves the correct points for create the vector 
+                    vector<vec2> Foot;
+                    if (maxDistIndex == 0) {
+                        Foot.push_back(quadPoints[0]);
+                        Foot.push_back(quadPoints[1]);
+                    }
+                    else if (maxDistIndex == 1) {
+                        Foot.push_back(quadPoints[0]);
+                        Foot.push_back(quadPoints[2]);
+                    }
+                    else if (maxDistIndex == 2) {
+                        Foot.push_back(quadPoints[0]);
+                        Foot.push_back(quadPoints[3]);
+                    }
+                    else if (maxDistIndex == 3) {
+                        Foot.push_back(quadPoints[1]);
+                        Foot.push_back(quadPoints[2]);
+                    }
+                    else if (maxDistIndex == 4) {
+                        Foot.push_back(quadPoints[1]);
+                        Foot.push_back(quadPoints[3]);
+                    }
+                    else if (maxDistIndex == 5) {
+                        Foot.push_back(quadPoints[2]);
+                        Foot.push_back(quadPoints[3]);
+                    }
+                    // always makes the first point closer to the center
+                    vec2 heel = (distance(center, Foot[0]) < distance(center, Foot[1])) ? Foot[0] : Foot[1];
+                    vec2 sole = (heel == Foot[0]) ? Foot[1] : Foot[0];
+                    Foot.clear();
+                    Foot.push_back(heel);
+                    Foot.push_back(sole);
+                    feet.push_back(Foot);
+
+                }
+                vector<vec2> Feet1 = feet[0];
+                Foot1a = Feet1[0];
+                Foot1b = Feet1[1];
+                direction1 = normalize(Foot1a - Foot1b);
+                if (size > 1) {
+                    vector<vec2> Feet2 = feet[1];
+                    Foot2a = Feet2[0];
+                    Foot2b = Feet2[1];
+                    direction2 = normalize(Foot2a - Foot2b);
+                }
+                else {
+                    direction2 = oldDirection2;
+                }
+
+                direction1 = (angle(direction1, oldDirection1) > ThresholdAngle) ? oldDirection1 : direction1;
+                direction2 = (angle(direction2, oldDirection2) > ThresholdAngle) ? oldDirection2 : direction2;
+
+                //cout << ofRadToDeg(angle(direction1, oldDirection1)) << endl;
+                //cout << ofRadToDeg(angle(direction2, oldDirection2)) << endl;
+
+                oldDirection1 = direction1;
+                oldDirection2 = direction2;
+                // check if the angles are not inverted
+                direction1 = (angle(direction1, direction2) > ThresholdAngle) ? -direction1 : direction1;
+
+                secondary = (MAX(distance(Foot1a, Foot1b), distance(Foot2a, Foot2b)) > 90) ? (direction1 + direction2) * 0.5f : oldDirection;
+                
+            }
+        }
+    }
+    
+    // only compute orientation if found 4 blobs  
+    if (useFOUR && currentTime - cvTimer > cvDebounce) {
+        if (contourFinder.size() == 4) {
+
+            vec2 a = ofxCv::toOf(contourFinder.getVelocity(0));
+            vec2 b = ofxCv::toOf(contourFinder.getVelocity(1));
+            vec2 c = ofxCv::toOf(contourFinder.getVelocity(2));
+            vec2 d = ofxCv::toOf(contourFinder.getVelocity(3));
+            if (abs(length(a)) > 5.5f || abs(length(b)) > 5.5f ||
+                abs(length(c)) > 5.5f || abs(length(d)) > 5.5f) 
+                return;
+
+            // store blobs centroids
+            ofSetColor(ofColor::white);
+            for (int i = 0; i < 4; i++) {
+                contours[i] = vec2(contourFinder.getCentroid(i).x, contourFinder.getCentroid(i).y);
+            }
+
+            // algorithm to sort minimum distance between blobs
+            // this connects the blobs with the each foot
+            float minDist = 1000;
+            float dist[3];
+            int indexWithFirst = 5, indexA = 5, indexB = 5;
+            for (int i = 1; i < 4; i++) {
+                dist[i] = distance(contours[0], contours[i]);
+                if (dist[i] < minDist && dist[i] > 70) {
+                    minDist = dist[i];
+                    indexWithFirst = i;
+                }
+            }
+            // if feet are too close the minimum distance can be between feet
+            // so check if the max distance is greater than a Threshold
+            // if it is change the index
+            if (distance(contours[0], contours[indexWithFirst]) > 100) {
+                if (indexWithFirst == 1) indexWithFirst = 2;
+                if (indexWithFirst == 2) indexWithFirst = 1;
+                if (indexWithFirst == 3) indexWithFirst = 2;
+            }
+            // build the next foot based on this index
+            if (indexWithFirst == 1) {
+                indexA = 2;
+                indexB = 3;
+            }
+            else if (indexWithFirst == 2) {
+                indexA = 1;
+                indexB = 3;
+            }
+            else {
+                indexA = 1;
+                indexB = 2;
+            }
+
+            // always makes the first point closer to the center
+            // this might be a problem if the person is too far 
+            // from the center of the walking pad
+            Foot1a = (distance(center, contours[0]) < distance(center, contours[indexWithFirst])) ? contours[0] : contours[indexWithFirst];
+            Foot1b = (Foot1a == contours[0]) ? contours[indexWithFirst] : contours[0];
+            Foot2a = (distance(center, contours[indexA]) < distance(center, contours[indexB])) ? contours[indexA] : contours[indexB];
+            Foot2b = (Foot2a == contours[indexA]) ? contours[indexB] : contours[indexA];
+
+            // builds the direction vector for each foot
+            direction1 = normalize(Foot1a - Foot1b);
+            direction2 = normalize(Foot2a - Foot2b);
+
+            // check if the angles are not inverted
+            direction1 = (angle(direction1, direction2) > ThresholdAngle) ? -direction1 : direction1;
+
+            primary = (MAX(distance(Foot1a, Foot1b), distance(Foot2a, Foot2b)) < 90) ? (direction1 + direction2) * 0.5f : oldDirection;
+
+        }
+    }
+    
+    
+    // moving averag
+    //if (movingAvgDir.size() > 0) {
+    //    for (int i = 0; i < movingAvgDir.size(); i++) primary += movingAvgDir[i];
+    //    primary /= movingAvgDir.size();
+    //}
+    //if (movingAvgDir.size() == avgDirWin) movingAvgDir.pop_back();   
+    //if (movingAvgDirSecondary.size() > 0) {
+    //    for (int i = 0; i < movingAvgDirSecondary.size(); i++) secondary += movingAvgDirSecondary[i];
+    //    secondary /= movingAvgDirSecondary.size();
+    //}
+    //if (movingAvgDirSecondary.size() == avgDirWin) movingAvgDirSecondary.pop_back();
+
+    if (useTWO && !useFOUR) {
+        if (secondary == vec2(0, 0)) return;
+        if (contourFinder.size() == 2) preDirection = normalize(secondary);
+    }
+    else if (useFOUR && !useTWO) {
+        if (primary == vec2(0, 0)) return;
+        if (contourFinder.size() == 4) preDirection = normalize(primary);
+    }
+    else {
+        if (secondary == vec2(0, 0)) return;
+        if (primary == vec2(0, 0)) return;
+        preDirection = normalize((primary + secondary) * 0.5f);
+    }
+
+    finalDirection = vec2(dirX.process(preDirection.x),dirY.process(preDirection.y));
+    //text.drawString(ofToString(ofRadToDeg(angle(finalDirection, oldDirection)), 3), 200, 200);
+    if (currentTime - cvTimer > cvDebounce) {
+        oldDirection = finalDirection;
+        cvTimer = currentTime;
+    }
 }
 
 void ofApp::oscSend() {
@@ -1287,8 +1515,8 @@ void ofApp::oscSend() {
     ofxOscMessage m;
     m.setAddress("/walkingpad");
     m.addFloatArg(MAX(__fs * 10,0)); //theSpeed
-    m.addFloatArg(_avgB.x);
-    m.addFloatArg(_avgB.y);
+    m.addFloatArg(finalDirection.x);
+    m.addFloatArg(finalDirection.y);
     //m.addFloatArg(theSpeed); //theSpeed
     //m.addFloatArg(movementDetection);
     //m.addBoolArg(jump);
@@ -1376,7 +1604,7 @@ void ofApp::keyReleased(int key) {
     if (key == '3') {
         bigMatrix = true;
         _debugNewMethod = true;
-        _debugOpticalFlow = false;
+        _showContourFinder = false;
         showSpeed = false;
         showSpeedMul = false;
         showX = false;
@@ -1386,7 +1614,7 @@ void ofApp::keyReleased(int key) {
     if (key == '4') {
         bigMatrix = true;
         _debugNewMethod = false;
-        _debugOpticalFlow = true;
+        _showContourFinder = true;
         showSpeed = false;
         showSpeedMul = false;
         showX = false;
@@ -1415,7 +1643,6 @@ void ofApp::keyReleased(int key) {
     }
 
 }
-
 
 #pragma endregion
 
