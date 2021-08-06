@@ -21,7 +21,7 @@ class ofApp : public ofBaseApp{
 
 	public:
 		void setup();
-		//void update();
+		void update();
 		void draw();
 		void setupDevices(string COM = 0, int Baud = 0);
 		void keyPressed(int key);
@@ -34,6 +34,7 @@ class ofApp : public ofBaseApp{
 		void FinalSpeedDecision();
 		void OpenCV();
 		void oscSend();
+		void oscReceive();
 		void csvRecord();
 		void blobDetection();
 		void calculateOrientation();
@@ -61,6 +62,7 @@ class ofApp : public ofBaseApp{
 		
 		ofColor col[2] = { ofColor(45,45,45), ofColor::red };
 		ofxOscSender osc;
+		ofxOscReceiver oscR;
 
 		ofxCsv csv;
 		bool recording;
@@ -149,8 +151,7 @@ class ofApp : public ofBaseApp{
 		deque<vec2> tempCurrentCentroid,avgRateOfChange, avgSpeed;
 		deque<float> lastFewSpeeds;
 		ofParameter<float> _constant;
-		const float constant = (float)1/60;
-		float elapsedTime = constant;
+		float elapsedTime = (float)1/60.0f;
 		int _Timer1 = 0, _Timer2 = 0, _Timer3 = 0, coounter =0;
 		float _stepDist = 0,stepDistance = 0, theSpeed = 0, oldSpeed = 0;
 		bool wait = false, initial = true, stepDetected = false;
@@ -182,7 +183,6 @@ class ofApp : public ofBaseApp{
 		int cvTimer = 0, cvDebounce = 25;
 		ofxLPF dirX, dirY;
 
-		
 
 		// orientation
 		deque<vec2> stepLocations;
@@ -206,7 +206,11 @@ class ofApp : public ofBaseApp{
 		int _state = 0, _oldState = 0;
 		float _s = 0, _prevS = 0, _oldVel = 0, _dif = 0;
 		int _timer1, _timer2, _timer3, _timer4, _timer5, _timer6, timeToStop = 2000;
-		float _fs = 0, __fs;
+		float _fs = 0, __fs =0;
 		ofxLPF LowPass,LowPass2;
 		deque<vec2>footFall;
+		deque<float>aSpeed;
+		int timeTurned=0;
+		int timeBetweenSteps = 0, _timeBetweenSteps = 0;
+		int countSteps = 0;
 };
