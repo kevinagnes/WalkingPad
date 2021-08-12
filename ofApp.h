@@ -107,11 +107,11 @@ class ofApp : public ofBaseApp{
 
 		float xPos = 0;
 		ofPolyline lineX;
-		ofPolyline lineAvgX;
+		//ofPolyline lineAvgX;
 		ofPolyline lineY;
-		ofPolyline lineAvgY;
+		//ofPolyline lineAvgY;
 		ofPolyline lineN;
-		ofPolyline lineSpeed,lineSpeedMul;
+		ofPolyline lineSpeed,lineSpeedMul, lineVLS;
 		ofPolyline centroidPainting;
 		float X = 0;
 		float Y = 0;
@@ -178,7 +178,6 @@ class ofApp : public ofBaseApp{
 		float ThresholdAngle = HALF_PI;
 		float minThreshold = 40;
 		bool _turning = false;
-		bool useTWO = false , useFOUR = true;
 		vec2 CENTER1,CENTER2;
 		int cvTimer = 0, cvDebounce = 25;
 		ofxLPF dirX, dirY;
@@ -213,4 +212,7 @@ class ofApp : public ofBaseApp{
 		int timeTurned=0;
 		int timeBetweenSteps = 0, _timeBetweenSteps = 0;
 		int countSteps = 0;
+
+		// Unity
+		float VLSpeed=0;
 };

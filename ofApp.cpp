@@ -21,27 +21,27 @@ void ofApp::setup() {
     ofxGuiSetDefaultHeight(20);
     ofxGuiSetDefaultWidth(150);
     parameters.setName("WalkingPad");
-    parameters.add(minArea.set("Min area", 14, 1, 100));
+    parameters.add(minArea.set("Min area", 8, 1, 100));
     parameters.add(maxArea.set("Max area", 60, 1, 500));
     parameters.add(threshold.set("Threshold", 32, 0, 255));
     parameters.add(holes.set("Holes?", true));
     parameters.add(dT.set("offset: ", 0.1f, 0, 50));
     //parameters.add(T1.set("OpticalFlow: ", 0.1f, 0, 1));
-    parameters.add(T2.set("Blob Thresh: ", 50, 1, 255));
+    parameters.add(T2.set("Blob Thresh: ", 17, 1, 255));
     //parameters.add(T3.set("avgZeroCrossing: ", 20, 0, 500));
     //parameters.add(T4.set("stepDebounce: ", 150, 0, 500));
     //parameters.add(T5.set("ZeroCrossing Thresh: ", 25, 0, 400));
     parameters.add(T4.set("turningDelay: ", 500, 0, 1000));
     parameters.add(_constant.set("CONSTANT: ", 1, 0, 3));
     parameters.add(_debug.set("showDebug", false));
-    parameters.add(_showContourFinder.set("showContourFinder", false));
+    parameters.add(_showContourFinder.set("showContourFinder", true));
     parameters.add(_debugNewMethod.set("showCentroid", false));
     parameters.add(bigMatrix.set("show Big Matrix", false));
     parameters.add(showPainting.set("showPainting", false));
     parameters.add(showX.set("X CoG", false));
     parameters.add(showY.set("Y CoG", false));
-    parameters.add(showSpeed.set("Speed", true));
-    parameters.add(showSpeedMul.set("SpeedMultiplier", true));
+    parameters.add(showSpeed.set("Speed", false));
+    parameters.add(showSpeedMul.set("SpeedMultiplier", false));
     parameters.add(showAvg.set("ZeroCrossingLine", false));
     parameters.add(showNas.set("NumberOfActiveSensors", false));
     gui.setup(parameters);
@@ -219,7 +219,7 @@ void ofApp::draw() {
     //calculateOrientation();
 
     // end blocking state, after turning in place
-    if (turned && currentTime - timeTurned > 1000) {
+    if (turned && currentTime - timeTurned > 500) {
         turned = !turned;
     }
 #pragma endregion
@@ -416,13 +416,15 @@ void ofApp::MovementDetector2() {
         if (_state == 0 && currentTime - _timer2 > debounceTime) {    
             _timer1 = currentTime;
             _state = 1;
+            countSteps += 1;
         }
     }
     // CoG not in movement (FOOT MAX HEIGHT / DOUBLE SUPPORT)
     else {
         if (_state == 1 && currentTime - _timer1 > debounceTime) {
             _timer2 = currentTime;
-            _state = 0;     
+            _state = 0;  
+            countSteps += 1;
         }
     }
     float a = 0.5f;
@@ -431,11 +433,10 @@ void ofApp::MovementDetector2() {
     case 0:
         ofSetColor(ofColor::red); // double support & foot strike
         _s = MAX(0, _s - a * timeBetweenSteps * 0.001f);
-
         break;
     case 1:
         ofSetColor(ofColor::green); // Foot-Off
-
+        
         if (footFall.size() == 0) footFall.push_front(_curr);
         else {
             if (distance(footFall[0], _curr) > 0.1f) {
@@ -479,17 +480,14 @@ void ofApp::MovementDetector2() {
             __fs += as;
         }
         __fs /= aSpeed.size();
-        // deceleration function
-        //float a = 0.25f;
-        //__fs = MAX(0, __fs - a * timeBetweenSteps * 0.001f);
         _timer4 = currentTime;
     }
     
     
         // debug state
 
-    ofDrawCircle(ofGetWidth() - 50, ofGetHeight() * 0.5f, 25);
-    text.drawString(ofToString(__fs, 1), ofGetWidth() / 2, ofGetHeight() / 2);
+    //ofDrawCircle(ofGetWidth() - 50, ofGetHeight() * 0.5f, 25);
+    //text.drawString(ofToString(_s, 1), ofGetWidth() / 2, ofGetHeight() / 2);
 
 
     // old=curr
@@ -1011,25 +1009,28 @@ void ofApp::drawGraph(float sX, float sY, float avgX, float avgY, int sN, float 
     ofPushStyle();
     ofSetLineWidth(ofGetHeight() * 0.002);
     ofPoint xpt, ypt;
-    ofPoint avx, avy;
+    //ofPoint avx, avy;
+    ofPoint vls;
     ofPoint npt;
     ofPoint spt, smpt;
     xpt.set(xPos, ofMap(sX, -400, 400, ofGetHeight(), 0, true), 2);
-    avx.set(xPos, ofMap(avgX, -400, 400, ofGetHeight(), 0, true), 2);
+    //avx.set(xPos, ofMap(avgX, -400, 400, ofGetHeight(), 0, true), 2);
     ypt.set(xPos, ofMap(sY, -400, 400, ofGetHeight(), 0, true), 2);
-    avy.set(xPos, ofMap(avgY, -400, 400, ofGetHeight(), 0, true), 2);
+    //avy.set(xPos, ofMap(avgY, -400, 400, ofGetHeight(), 0, true), 2);
     npt.set(xPos, ofMap(sN, 0, sensorNumber, ofGetHeight(), 0, true), 2);
     /*spt.set(xPos, ofMap(theSpeed, 0, 20, ofGetHeight(), 0, true), 2);
     smpt.set(xPos, ofMap(movementDetection, 0, 9, ofGetHeight(), 0, true), 2);*/
     spt.set(xPos, ofMap(__fs, 0, 15, ofGetHeight(), 0, true), 2);
-    smpt.set(xPos, ofMap(_fs, 0, 15, ofGetHeight(), 0, true), 2);
+    smpt.set(xPos, ofMap(_s, 0, 15, ofGetHeight(), 0, true), 2);
+    if (VLSpeed>=0)vls.set(xPos, ofMap(VLSpeed, 0, 15, ofGetHeight(), 0, true), 2);
     lineX.addVertex(xpt);
-    lineAvgX.addVertex(avx);
+    //lineAvgX.addVertex(avx);
     lineY.addVertex(ypt);
-    lineAvgY.addVertex(avy);
+    //lineAvgY.addVertex(avy);
     lineN.addVertex(npt);
     lineSpeed.addVertex(spt);
     lineSpeedMul.addVertex(smpt);
+    if (VLSpeed >= 0) lineVLS.addVertex(vls);
 
     int alphaX = 255, alphaY = 255;
     if (switcher) alphaY = 127;
@@ -1040,40 +1041,43 @@ void ofApp::drawGraph(float sX, float sY, float avgX, float avgY, int sN, float 
     int txtXpos = 190;
     ofDrawBitmapString("X:   " + ofToString(sX), txtXpos, 15);
     ofDrawBitmapString("freqX:   " + ofToString(freqX), txtXpos, 25);
-    ofSetColor(155, 100, 100, alphaX);
-    if (showAvg) lineAvgX.draw();
-    ofSetColor(150, 150, 255, alphaY);
-    if (showY)lineY.draw();
+    //ofSetColor(155, 100, 100, alphaX);
+    //if (showAvg) lineAvgX.draw();
+    //ofSetColor(150, 150, 255, alphaY);
+    //if (showY)lineY.draw();
     ofDrawBitmapString("Y:   " + ofToString(sY), txtXpos, 35);
     ofDrawBitmapString("freqY:   " + ofToString(freqY), txtXpos, 45);
-    ofSetColor(100, 100, 155, alphaY);
-    if (showAvg) lineAvgY.draw();
+    //ofSetColor(100, 100, 155, alphaY);
+    //if (showAvg) lineAvgY.draw();
     ofSetColor(100, 255, 100);
     if (showNas) lineN.draw();
     ofDrawBitmapString("N: " + ofToString(sN), txtXpos, 55);
     ofSetColor(ofColor::white); 
     ofDrawBitmapString("The Speed: " + ofToString(__fs,2), txtXpos, 65);
-    ofDrawBitmapString("SpeedMul: " + ofToString(_fs,2), txtXpos, 75);
+    ofDrawBitmapString("SpeedMul: " + ofToString(_s,2), txtXpos, 75);
     ofDrawBitmapString("STATE: " + ofToString(_state), txtXpos, 85);
     ofDrawBitmapString("Time Between steps: " + ofToString(_timeBetweenSteps), txtXpos, 95);
-    
-    /*ofDrawBitmapString("The Speed: " + ofToString(theSpeed), txtXpos, 65);
-    ofDrawBitmapString("SpeedMul: " + ofToString(movementDetection), txtXpos, 75);*/
-    if (showSpeed) lineSpeed.draw();
-    ofSetColor(ofColor::yellow);
+        
+    ofSetColor(ofColor::yellow,150);
     if (showSpeedMul) lineSpeedMul.draw();
-
+    ofSetColor(ofColor::red,200);
+    ofSetLineWidth(ofGetHeight() * 0.005);
+    if (showSpeed) lineSpeed.draw();
+    ofSetLineWidth(ofGetHeight() * 0.003);
+    ofSetColor(ofColor::green);
+    if (showSpeed) lineVLS.draw();
 
     xPos++;
     if (xPos > ofGetWidth()) {
         xPos = 0;
         lineX.clear();
-        lineAvgX.clear();
+        //lineAvgX.clear();
         lineY.clear();
-        lineAvgY.clear();
+        //lineAvgY.clear();
         lineN.clear();
         lineSpeed.clear();
         lineSpeedMul.clear();
+        lineVLS.clear();
         ofBackground(col[0]);
     }
     ofPopStyle();
@@ -1125,8 +1129,8 @@ void ofApp::drawOrientation() {
     float __y = ofGetHeight() * 0.5f - __size;    
     ofTranslate(__x, __y);
     ofScale(scaleFactor);
-    //ofSetColor(255);
-    //img.draw(0, 0);
+    ofSetColor(255);
+    img.draw(0, 0);
     ofSetColor(0,255,0);
     contourFinder.draw(); 
     ofFill();
@@ -1202,6 +1206,12 @@ void ofApp::OpenCV() {
     img = pixel;
     // resize to 300x300 pixels (adds blur, good for CV)
     img.resize(resize, resize);
+
+    ofImage img2, img3;
+    ofxCv::dilate(img,img2, 1);
+    ofxCv::threshold(img2, T2);
+
+    img = img2;
     // parameters for ContourFinder
     contourFinder.setMinAreaRadius(minArea);
     contourFinder.setMaxAreaRadius(maxArea);
@@ -1212,236 +1222,226 @@ void ofApp::OpenCV() {
     vec2 _forward = vec2(0, 0);
     vec2 center = vec2(150, 150);
 
-
-    // 2 blobs prediction
-    if (useTWO && currentTime - cvTimer > cvDebounce) {
+    // new value after 25ms
+    if (currentTime - cvTimer > cvDebounce) {
         int size = contourFinder.size();
         if (size > 0) {
-            
+            // gets the first centroid
             CENTER1 = ofxCv::toOf(contourFinder.getCenter(0));
-            if (size>1) CENTER2 = ofxCv::toOf(contourFinder.getCenter(1));
-
-            // clear previous and create the vector of quads
-            quads.clear();
-            for (int i = 0; i < size; i++) {
-                quads.push_back(contourFinder.getFitQuad(i));
-            }
-            
-            // we are looking the pair of foot
-            int quadSize = quads.size();
-            if (quadSize > 0) {
-                vector<vector<vec2>> feet;
-                vec2 direction[2];
-                for (int i = 0; i < quadSize; i++) {
-                    // convert cv::point to vec2
-                    vector<cv::Point> quad = quads[i];
-                    vector<vec2>  quadPoints;
-                    for (cv::Point p : quad) quadPoints.push_back(vec2(p.x, p.y));
-
-                    // get distances from points
-                    vector<float> quadDist;
-                    quadDist.push_back(distance(quadPoints[0], quadPoints[1]));
-                    quadDist.push_back(distance(quadPoints[0], quadPoints[2]));
-                    quadDist.push_back(distance(quadPoints[0], quadPoints[3]));
-                    quadDist.push_back(distance(quadPoints[1], quadPoints[2]));
-                    quadDist.push_back(distance(quadPoints[1], quadPoints[3]));
-                    quadDist.push_back(distance(quadPoints[2], quadPoints[3]));
-
-                    // find the biggest and smallest distances and stores their index
-                    float maxDist = 0;
-                    int maxDistIndex = 7;
-                    int minDist = 1000;
-                    int minDistIndex = 7;
-                    for (int j = 0; j < 6; j++) {
-                        if (quadDist[j] > maxDist) {
-                            maxDist = quadDist[j];
-                            maxDistIndex = j;
-                        }
-                        if (quadDist[j] < minDist) {
-                            minDist = quadDist[j];
-                            minDistIndex = j;
-                        }
-                    }
-                    float maxminDif = maxDist - minDist;
-                    //cout << "maxminDif  " <<maxminDif << endl;
-                    if (maxminDif < minThreshold) return;
-                    if (maxDist < 50) return;
-
-                    // saves the correct points for create the vector 
-                    vector<vec2> Foot;
-                    if (maxDistIndex == 0) {
-                        Foot.push_back(quadPoints[0]);
-                        Foot.push_back(quadPoints[1]);
-                    }
-                    else if (maxDistIndex == 1) {
-                        Foot.push_back(quadPoints[0]);
-                        Foot.push_back(quadPoints[2]);
-                    }
-                    else if (maxDistIndex == 2) {
-                        Foot.push_back(quadPoints[0]);
-                        Foot.push_back(quadPoints[3]);
-                    }
-                    else if (maxDistIndex == 3) {
-                        Foot.push_back(quadPoints[1]);
-                        Foot.push_back(quadPoints[2]);
-                    }
-                    else if (maxDistIndex == 4) {
-                        Foot.push_back(quadPoints[1]);
-                        Foot.push_back(quadPoints[3]);
-                    }
-                    else if (maxDistIndex == 5) {
-                        Foot.push_back(quadPoints[2]);
-                        Foot.push_back(quadPoints[3]);
-                    }
-                    // always makes the first point closer to the center
-                    vec2 heel = (distance(center, Foot[0]) < distance(center, Foot[1])) ? Foot[0] : Foot[1];
-                    vec2 sole = (heel == Foot[0]) ? Foot[1] : Foot[0];
-                    Foot.clear();
-                    Foot.push_back(heel);
-                    Foot.push_back(sole);
-                    feet.push_back(Foot);
-
+            //gets the second centroid
+            if (size > 1) CENTER2 = ofxCv::toOf(contourFinder.getCenter(1));
+            // in case of two blobs
+            if (size == 2) {
+                // clear previous and create the vector of quads
+                quads.clear();
+                for (int i = 0; i < size; i++) {
+                    quads.push_back(contourFinder.getFitQuad(i));
                 }
-                vector<vec2> Feet1 = feet[0];
-                Foot1a = Feet1[0];
-                Foot1b = Feet1[1];
-                direction1 = normalize(Foot1a - Foot1b);
-                if (size > 1) {
-                    vector<vec2> Feet2 = feet[1];
-                    Foot2a = Feet2[0];
-                    Foot2b = Feet2[1];
-                    direction2 = normalize(Foot2a - Foot2b);
+
+                // we are looking for the pair of foot
+                int quadSize = quads.size();
+                if (quadSize > 0) {
+                    vector<vector<vec2>> feet;
+                    vec2 direction[2];
+                    for (int i = 0; i < quadSize; i++) {
+                        // convert cv::point to vec2
+                        vector<cv::Point> quad = quads[i];
+                        vector<vec2>  quadPoints;
+                        for (cv::Point p : quad) quadPoints.push_back(vec2(p.x, p.y));
+
+                        // get distances from points
+                        vector<float> quadDist;
+                        quadDist.push_back(distance(quadPoints[0], quadPoints[1]));
+                        quadDist.push_back(distance(quadPoints[0], quadPoints[2]));
+                        quadDist.push_back(distance(quadPoints[0], quadPoints[3]));
+                        quadDist.push_back(distance(quadPoints[1], quadPoints[2]));
+                        quadDist.push_back(distance(quadPoints[1], quadPoints[3]));
+                        quadDist.push_back(distance(quadPoints[2], quadPoints[3]));
+
+                        // find the biggest and smallest distances and stores their index
+                        float maxDist = 0;
+                        int maxDistIndex = 7;
+                        int minDist = 1000;
+                        int minDistIndex = 7;
+                        for (int j = 0; j < 6; j++) {
+                            if (quadDist[j] > maxDist) {
+                                maxDist = quadDist[j];
+                                maxDistIndex = j;
+                            }
+                            if (quadDist[j] < minDist) {
+                                minDist = quadDist[j];
+                                minDistIndex = j;
+                            }
+                        }
+                        float maxminDif = maxDist - minDist;
+                        vector<vec2> Foot;
+
+                        // this is probably one foot divided into heel and sole
+                        // treat it as one foot and mirror horizontally to the other
+                        if (maxminDif < minThreshold) {
+                            Foot.push_back(ofxCv::toOf(contourFinder.getCenter(0)));
+                            Foot.push_back(ofxCv::toOf(contourFinder.getCenter(1)));
+                            feet.push_back(Foot);
+                        }
+                        // this is a normal two blobs, both feet
+                        else {
+                            //if (maxDist < 50) return;
+                            // saves the correct points for create the vector 
+
+                            if (maxDistIndex == 0) {
+                                Foot.push_back(quadPoints[0]);
+                                Foot.push_back(quadPoints[1]);
+                            }
+                            else if (maxDistIndex == 1) {
+                                Foot.push_back(quadPoints[0]);
+                                Foot.push_back(quadPoints[2]);
+                            }
+                            else if (maxDistIndex == 2) {
+                                Foot.push_back(quadPoints[0]);
+                                Foot.push_back(quadPoints[3]);
+                            }
+                            else if (maxDistIndex == 3) {
+                                Foot.push_back(quadPoints[1]);
+                                Foot.push_back(quadPoints[2]);
+                            }
+                            else if (maxDistIndex == 4) {
+                                Foot.push_back(quadPoints[1]);
+                                Foot.push_back(quadPoints[3]);
+                            }
+                            else if (maxDistIndex == 5) {
+                                Foot.push_back(quadPoints[2]);
+                                Foot.push_back(quadPoints[3]);
+                            }
+                            // always makes the first point closer to the center
+                            vec2 heel = (distance(center, Foot[0]) < distance(center, Foot[1])) ? Foot[0] : Foot[1];
+                            vec2 sole = (heel == Foot[0]) ? Foot[1] : Foot[0];
+                            Foot.clear();
+                            Foot.push_back(heel);
+                            Foot.push_back(sole);
+                            feet.push_back(Foot);
+                        }
+                    }
+                    vector<vec2> Feet1 = feet[0];
+                    Foot1a = Feet1[0];
+                    Foot1b = Feet1[1];
+                    direction1 = normalize(Foot1a - Foot1b);
+                    if (Foot1a == Foot1b) direction2 = oldDirection2;
+                    else if (size > 1) {
+                        vector<vec2> Feet2 = feet[1];
+                        Foot2a = Feet2[0];
+                        Foot2b = Feet2[1];
+                        direction2 = normalize(Foot2a - Foot2b);
+                    }
+                    else {
+                        direction2 = oldDirection2;
+                    }
+
+                    direction1 = (angle(direction1, oldDirection1) > ThresholdAngle) ? oldDirection1 : direction1;
+                    direction2 = (angle(direction2, oldDirection2) > ThresholdAngle) ? oldDirection2 : direction2;
+
+                    //cout << ofRadToDeg(angle(direction1, oldDirection1)) << endl;
+                    //cout << ofRadToDeg(angle(direction2, oldDirection2)) << endl;
+
+                    oldDirection1 = direction1;
+                    oldDirection2 = direction2;
+
+                    // check if the angles are not inverted
+                    direction1 = (angle(direction1, direction2) > ThresholdAngle) ? -direction1 : direction1;
+
+                    secondary = (MAX(distance(Foot1a, Foot1b), distance(Foot2a, Foot2b)) > 90) ? (direction1 + direction2) * 0.5f : oldDirection;
+                    preDirection = normalize(secondary);
+                }
+            }
+            // in case of three blobs
+            else if (size == 3) {
+                // TO DO
+            }
+            // in case of four blobs
+            else if (size == 4) {
+                // prevent to analise data if they are moving too fast
+                // check if this is still necessary
+                vec2 a = ofxCv::toOf(contourFinder.getVelocity(0));
+                vec2 b = ofxCv::toOf(contourFinder.getVelocity(1));
+                vec2 c = ofxCv::toOf(contourFinder.getVelocity(2));
+                vec2 d = ofxCv::toOf(contourFinder.getVelocity(3));
+                if (abs(length(a)) > 5.5f || abs(length(b)) > 5.5f ||
+                    abs(length(c)) > 5.5f || abs(length(d)) > 5.5f)
+                    return;
+
+                // store blobs centroids
+                ofSetColor(ofColor::white);
+                for (int i = 0; i < 4; i++) {
+                    contours[i] = vec2(contourFinder.getCentroid(i).x, contourFinder.getCentroid(i).y);
+                }
+
+                // algorithm to sort minimum distance between blobs
+                // this connects the blobs with the each foot
+                float minDist = 1000;
+                float dist[3];
+                int indexWithFirst = 5, indexA = 5, indexB = 5;
+                for (int i = 1; i < 4; i++) {
+                    dist[i] = distance(contours[0], contours[i]);
+                    if (dist[i] < minDist && dist[i] > 70) {
+                        minDist = dist[i];
+                        indexWithFirst = i;
+                    }
+                }
+                // if feet are too close the minimum distance can be between feet
+                // so check if the max distance is greater than a Threshold
+                // if it is change the index
+                if (distance(contours[0], contours[indexWithFirst]) > 100) {
+                    if (indexWithFirst == 1) indexWithFirst = 2;
+                    if (indexWithFirst == 2) indexWithFirst = 1;
+                    if (indexWithFirst == 3) indexWithFirst = 2;
+                }
+                // build the next foot based on this index
+                if (indexWithFirst == 1) {
+                    indexA = 2;
+                    indexB = 3;
+                }
+                else if (indexWithFirst == 2) {
+                    indexA = 1;
+                    indexB = 3;
                 }
                 else {
-                    direction2 = oldDirection2;
+                    indexA = 1;
+                    indexB = 2;
                 }
 
-                direction1 = (angle(direction1, oldDirection1) > ThresholdAngle) ? oldDirection1 : direction1;
-                direction2 = (angle(direction2, oldDirection2) > ThresholdAngle) ? oldDirection2 : direction2;
+                // always makes the first point closer to the center
+                // this might be a problem if the person is too far 
+                // from the center of the walking pad
+                Foot1a = (distance(center, contours[0]) < distance(center, contours[indexWithFirst])) ? contours[0] : contours[indexWithFirst];
+                Foot1b = (Foot1a == contours[0]) ? contours[indexWithFirst] : contours[0];
+                Foot2a = (distance(center, contours[indexA]) < distance(center, contours[indexB])) ? contours[indexA] : contours[indexB];
+                Foot2b = (Foot2a == contours[indexA]) ? contours[indexB] : contours[indexA];
 
-                //cout << ofRadToDeg(angle(direction1, oldDirection1)) << endl;
-                //cout << ofRadToDeg(angle(direction2, oldDirection2)) << endl;
+                // builds the direction vector for each foot
+                direction1 = normalize(Foot1a - Foot1b);
+                direction2 = normalize(Foot2a - Foot2b);
 
-                oldDirection1 = direction1;
-                oldDirection2 = direction2;
                 // check if the angles are not inverted
-                direction1 = (angle(direction1, direction2) > ThresholdAngle) ? -direction1 : direction1;
-
-                secondary = (MAX(distance(Foot1a, Foot1b), distance(Foot2a, Foot2b)) > 90) ? (direction1 + direction2) * 0.5f : oldDirection;
-                
-            }
-        }
-    }
-    
-    // only compute orientation if found 4 blobs  
-    if (useFOUR && currentTime - cvTimer > cvDebounce) {
-        if (contourFinder.size() == 4) {
-
-            vec2 a = ofxCv::toOf(contourFinder.getVelocity(0));
-            vec2 b = ofxCv::toOf(contourFinder.getVelocity(1));
-            vec2 c = ofxCv::toOf(contourFinder.getVelocity(2));
-            vec2 d = ofxCv::toOf(contourFinder.getVelocity(3));
-            if (abs(length(a)) > 5.5f || abs(length(b)) > 5.5f ||
-                abs(length(c)) > 5.5f || abs(length(d)) > 5.5f) 
-                return;
-
-            // store blobs centroids
-            ofSetColor(ofColor::white);
-            for (int i = 0; i < 4; i++) {
-                contours[i] = vec2(contourFinder.getCentroid(i).x, contourFinder.getCentroid(i).y);
-            }
-
-            // algorithm to sort minimum distance between blobs
-            // this connects the blobs with the each foot
-            float minDist = 1000;
-            float dist[3];
-            int indexWithFirst = 5, indexA = 5, indexB = 5;
-            for (int i = 1; i < 4; i++) {
-                dist[i] = distance(contours[0], contours[i]);
-                if (dist[i] < minDist && dist[i] > 70) {
-                    minDist = dist[i];
-                    indexWithFirst = i;
+                if (angle(direction1, direction2) > ThresholdAngle) {
+                    direction1 = -direction1;
                 }
-            }
-            // if feet are too close the minimum distance can be between feet
-            // so check if the max distance is greater than a Threshold
-            // if it is change the index
-            if (distance(contours[0], contours[indexWithFirst]) > 100) {
-                if (indexWithFirst == 1) indexWithFirst = 2;
-                if (indexWithFirst == 2) indexWithFirst = 1;
-                if (indexWithFirst == 3) indexWithFirst = 2;
-            }
-            // build the next foot based on this index
-            if (indexWithFirst == 1) {
-                indexA = 2;
-                indexB = 3;
-            }
-            else if (indexWithFirst == 2) {
-                indexA = 1;
-                indexB = 3;
-            }
-            else {
-                indexA = 1;
-                indexB = 2;
+                //direction1 = (angle(direction1, direction2) > ThresholdAngle) ? -direction1 : direction1;
+
+                primary = (MAX(distance(Foot1a, Foot1b), distance(Foot2a, Foot2b)) < 90) ? (direction1 + direction2) * 0.5f : oldDirection;
+                preDirection = normalize(primary);
+
             }
 
-            // always makes the first point closer to the center
-            // this might be a problem if the person is too far 
-            // from the center of the walking pad
-            Foot1a = (distance(center, contours[0]) < distance(center, contours[indexWithFirst])) ? contours[0] : contours[indexWithFirst];
-            Foot1b = (Foot1a == contours[0]) ? contours[indexWithFirst] : contours[0];
-            Foot2a = (distance(center, contours[indexA]) < distance(center, contours[indexB])) ? contours[indexA] : contours[indexB];
-            Foot2b = (Foot2a == contours[indexA]) ? contours[indexB] : contours[indexA];
-
-            // builds the direction vector for each foot
-            direction1 = normalize(Foot1a - Foot1b);
-            direction2 = normalize(Foot2a - Foot2b);
-
-            // check if the angles are not inverted
-            if (angle(direction1, direction2) > ThresholdAngle) {
-                direction1 = -direction1;
-            }
-            //direction1 = (angle(direction1, direction2) > ThresholdAngle) ? -direction1 : direction1;
-
-            primary = (MAX(distance(Foot1a, Foot1b), distance(Foot2a, Foot2b)) < 90) ? (direction1 + direction2) * 0.5f : oldDirection;
-
+            //final direction
+            finalDirection = preDirection;
         }
     }
-    
-    
-    // moving averag
-    //if (movingAvgDir.size() > 0) {
-    //    for (int i = 0; i < movingAvgDir.size(); i++) primary += movingAvgDir[i];
-    //    primary /= movingAvgDir.size();
-    //}
-    //if (movingAvgDir.size() == avgDirWin) movingAvgDir.pop_back();   
-    //if (movingAvgDirSecondary.size() > 0) {
-    //    for (int i = 0; i < movingAvgDirSecondary.size(); i++) secondary += movingAvgDirSecondary[i];
-    //    secondary /= movingAvgDirSecondary.size();
-    //}
-    //if (movingAvgDirSecondary.size() == avgDirWin) movingAvgDirSecondary.pop_back();
-
-    if (useTWO && !useFOUR) {
-        if (secondary == vec2(0, 0)) return;
-        if (contourFinder.size() == 2) preDirection = normalize(secondary);
-    }
-    else if (useFOUR && !useTWO) {
-        if (primary == vec2(0, 0)) return;
-        if (contourFinder.size() == 4) preDirection = normalize(primary);
-    }
-    else {
-        if (secondary == vec2(0, 0)) return;
-        if (primary == vec2(0, 0)) return;
-        preDirection = normalize((primary + secondary) * 0.5f);
-    }
-
-    finalDirection = vec2(dirX.process(preDirection.x),dirY.process(preDirection.y));
-    //text.drawString(ofToString(ofRadToDeg(angle(finalDirection, oldDirection)), 3), 200, 200);
     if (currentTime - cvTimer > cvDebounce) {
         oldDirection = finalDirection;
         cvTimer = currentTime;
     }
+        
 }
+
 
 void ofApp::oscSend() {
     // OSC send
@@ -1450,6 +1450,7 @@ void ofApp::oscSend() {
     m.addFloatArg(MAX(__fs,0)); //theSpeed
     m.addFloatArg(finalDirection.x);
     m.addFloatArg(finalDirection.y);
+    m.addFloatArg(MAX(_s, 0)); //theSpeed
     //m.addFloatArg(theSpeed); //theSpeed
     //m.addFloatArg(movementDetection);
     //m.addBoolArg(jump);
@@ -1472,6 +1473,10 @@ void ofApp::oscReceive() {
             turned = m.getArgAsBool(0);
             timeTurned = ofGetElapsedTimeMillis();
         }
+        if (m.getAddress() == "/walkingpad") {
+            // both the arguments are ints
+            VLSpeed = m.getArgAsFloat(1);
+        }
     }
 }
 
@@ -1482,6 +1487,9 @@ void ofApp::csvRecord() {
         row.setFloat(0, avgCentroid.x); // CoG X
         row.setFloat(1, avgCentroid.y); // CoG Y
         row.setInt(2, N);   // NaS mean
+        row.setFloat(3, __fs);
+        row.setFloat(4, _s);
+        row.setFloat(5, VLSpeed);
         //row.setBool(3, jump);
         csv.addRow(row);
     }
